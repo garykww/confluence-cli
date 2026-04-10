@@ -14,8 +14,6 @@ linters:
     - gocritic
 
 linters-settings:
-  govet:
-    shadow: true
   revive:
     rules:
       - name: exported
