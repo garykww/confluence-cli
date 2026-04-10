@@ -7,9 +7,10 @@ Give Claude direct access to your Confluence content: fetch pages as Markdown, s
 ## Quick Start
 
 ```bash
-# Build
-cd cli/confluence-cli
-go build -o confluence-cli .
+# Clone and build
+git clone git@github.com:garykww/confluence-cli.git
+cd confluence-cli
+make build
 
 # Set credentials
 export CONFLUENCE_BASE_URL=https://garykww.atlassian.net
@@ -48,14 +49,6 @@ Then reload your shell:
 source ~/.zshrc   # or source ~/.bashrc
 ```
 
-Alternatively, export them for a single session only:
-
-```bash
-export CONFLUENCE_BASE_URL=https://garykww.atlassian.net
-export CONFLUENCE_EMAIL=your.name@example.com
-export CONFLUENCE_API_TOKEN=your_token_here
-```
-
 ### 3. Verify the setup
 
 ```bash
@@ -68,26 +61,27 @@ If you see a list of spaces, authentication is working. A `401` error means the 
 
 ## Environment Variables
 
-All three are required for any subcommand that calls the Confluence API.
-The `to-storage` subcommand is offline-only and requires none of them.
+| Variable               | Description                                     | Required |
+|------------------------|-------------------------------------------------|----------|
+| `CONFLUENCE_BASE_URL`  | Base URL, e.g. `https://garykww.atlassian.net` | Yes      |
+| `CONFLUENCE_EMAIL`     | Your Atlassian account email                    | Yes      |
+| `CONFLUENCE_API_TOKEN` | Atlassian API token (not your password)         | Yes      |
+| `CONFLUENCE_TIMEOUT`   | HTTP timeout, e.g. `60s` (default: `30s`)       | No       |
 
-| Variable               | Description                                    |
-|------------------------|------------------------------------------------|
-| `CONFLUENCE_BASE_URL`  | Base URL, e.g. `https://garykww.atlassian.net` |
-| `CONFLUENCE_EMAIL`     | Your Atlassian account email                   |
-| `CONFLUENCE_API_TOKEN` | Atlassian API token (not your password)        |
+The `to-storage` subcommand is offline-only and requires none of them.
 
 ## Subcommands
 
-| Subcommand     | Description                                        |
-|----------------|----------------------------------------------------|
-| `get-page`     | Fetch a page by ID or full URL                     |
-| `search`       | Search pages using a CQL query                     |
-| `get-space`    | Get space details by key                           |
-| `list-spaces`  | List available spaces                              |
-| `get-children` | List child pages of a parent page                  |
-| `update-page`  | Update a page from a Markdown file (or stdin)      |
+| Subcommand     | Description                                                   |
+|----------------|---------------------------------------------------------------|
+| `get-page`     | Fetch a page by ID or full URL                                |
+| `search`       | Search pages using a CQL query                                |
+| `get-space`    | Get space details by key                                      |
+| `list-spaces`  | List available spaces                                         |
+| `get-children` | List child pages of a parent page                             |
+| `update-page`  | Update a page from a Markdown file (or stdin)                 |
 | `to-storage`   | Convert Markdown to Confluence storage format XHTML (offline) |
+| `version`      | Print version information                                     |
 
 Run `confluence-cli <subcommand> -h` for flag details on any subcommand.
 
@@ -206,6 +200,7 @@ Flags:
 ```
 
 The version is auto-incremented — pass the current version number, not `current + 1`.
+If the version is stale (someone else edited the page), a conflict error is returned with a hint to re-fetch.
 
 ```bash
 # Edit-in-place roundtrip
@@ -275,8 +270,6 @@ confluence-cli get-page -id 131166 | confluence-cli to-storage
 
 ## Edit Roundtrip Workflow
 
-The intended workflow for editing Confluence pages locally:
-
 ```bash
 # 1. Fetch the page as Markdown (frontmatter carries id + version)
 confluence-cli get-page -id 131166 > my-page.md
@@ -296,24 +289,39 @@ confluence-cli update-page -file my-page.md
 To let Claude read and edit Confluence pages during a session, add this to your `CLAUDE.md`. Claude will use the CLI via Bash to fetch, search, and update pages without any manual steps.
 
 ```markdown
-- **Confluence**: Use the CLI (`<install-dir>/confluence-cli`) via Bash to view and edit pages — fetch with `get-page`, search with `search`, push changes with `update-page`.
+- **Confluence**: Use the CLI (`<path-to>/confluence-cli`) via Bash to view and edit pages — fetch with `get-page`, search with `search`, push changes with `update-page`.
 ```
 
 ---
 
-## Running Tests
+## Development
 
-The test suite uses only the Go standard library (`net/http/httptest` for HTTP mocking).
+### Running Tests
 
 ```bash
-cd cli/confluence-cli
-go test ./...
+make test
 
-# Verbose output
-go test ./... -v
+# Verbose
+go test -v ./...
 
-# Run a specific test
-go test -run TestMarkdownToStorage ./...
+# Specific test
+go test -run TestMarkdownToStorage ./internal/confluence/
+```
+
+### Building
+
+```bash
+# Current platform
+make build
+
+# All platforms (output in dist/)
+make build-all
+```
+
+### Linting
+
+```bash
+make lint
 ```
 
 ---
@@ -321,13 +329,24 @@ go test -run TestMarkdownToStorage ./...
 ## Project Structure
 
 ```
-cli/confluence-cli/
-├── main.go          # Entry point, subcommand dispatch, config loading
-├── client.go        # HTTP client, auth, all Confluence API methods, data structs
-├── output.go        # JSON, human-readable, and Markdown formatters
-├── convert.go       # HTML ↔ Markdown / Markdown → Storage converters
-├── client_test.go   # Tests for HTTP client and URL extraction
-├── convert_test.go  # Tests for all conversion functions
-├── main_test.go     # Tests for config loading
-└── go.mod           # Module declaration (zero external dependencies)
+confluence-cli/
+├── cmd/
+│   └── confluence-cli/
+│       ├── main.go          # Entry point, subcommand dispatch, config loading
+│       ├── main_test.go     # Config loading tests
+│       └── output.go        # Terminal formatters (JSON, human-readable, Markdown)
+├── internal/
+│   └── confluence/
+│       ├── client.go        # HTTP client, auth, all Confluence API methods and types
+│       ├── client_test.go   # Client and URL extraction tests
+│       ├── convert.go       # HTML ↔ Markdown / Markdown → Storage converters
+│       └── convert_test.go  # Conversion tests
+├── .github/
+│   └── workflows/
+│       └── ci.yml           # CI: test, lint, cross-platform build, release
+├── .gitignore
+├── .golangci.yml            # Linter configuration
+├── .goreleaser.yaml         # Release configuration
+├── go.mod
+└── Makefile
 ```
