@@ -1,0 +1,41 @@
+run:
+  timeout: 5m
+
+linters:
+  enable:
+    - govet
+    - staticcheck
+    - errcheck
+    - goimports
+    - misspell
+    - revive
+    - gosec
+    - unconvert
+    - gocritic
+
+linters-settings:
+  govet:
+    shadow: true
+  revive:
+    rules:
+      - name: exported
+        arguments:
+          - disableStutteringCheck
+  gosec:
+    excludes:
+      - G304  # File path from variable is expected for a CLI tool
+  errcheck:
+    exclude-functions:
+      - fmt.Println
+      - fmt.Printf
+      - fmt.Fprintf
+      - fmt.Fprintln
+      - (io.Writer).Write
+
+issues:
+  exclude-rules:
+    - path: _test\.go
+      linters:
+        - gosec
+        - errcheck
+        - gocritic
