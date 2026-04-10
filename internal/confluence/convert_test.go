@@ -15,8 +15,8 @@ func TestParseFrontmatter(t *testing.T) {
 		wantBody string
 	}{
 		{
-			name: "all fields present",
-			input: "---\nid: \"123\"\ntitle: \"My Page\"\nspace: \"TEST\"\nversion: 5\n---\n\nBody here.",
+			name:     "all fields present",
+			input:    "---\nid: \"123\"\ntitle: \"My Page\"\nspace: \"TEST\"\nversion: 5\n---\n\nBody here.",
 			wantMeta: PageMeta{ID: "123", Title: "My Page", Space: "TEST", Version: 5},
 			wantBody: "Body here.",
 		},

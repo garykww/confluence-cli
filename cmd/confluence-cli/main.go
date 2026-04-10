@@ -173,11 +173,12 @@ func runGetPage(ctx context.Context, client *confluence.Client, args []string) {
 		fatal("get-page: %v", err)
 	}
 
-	if *jsonOut {
+	switch {
+	case *jsonOut:
 		printJSON(page)
-	} else if *human {
+	case *human:
 		printPage(page)
-	} else {
+	default:
 		printPageMarkdown(page)
 	}
 }

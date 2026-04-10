@@ -218,7 +218,7 @@ type node struct {
 	data     string // text content for text nodes
 }
 
-func (n *node) isText() bool   { return n.tag == "" }
+func (n *node) isText() bool { return n.tag == "" }
 func (n *node) attr(k string) string {
 	if n.attrs == nil {
 		return ""
@@ -661,11 +661,12 @@ func renderMacro(n *node, ctx *renderCtx) string {
 func renderViewMacro(n *node, ctx *renderCtx) string {
 	cls := n.attr("class")
 	macroType := "Info"
-	if strings.Contains(cls, "macro-warning") {
+	switch {
+	case strings.Contains(cls, "macro-warning"):
 		macroType = "Warning"
-	} else if strings.Contains(cls, "macro-note") {
+	case strings.Contains(cls, "macro-note"):
 		macroType = "Note"
-	} else if strings.Contains(cls, "macro-tip") {
+	case strings.Contains(cls, "macro-tip"):
 		macroType = "Tip"
 	}
 
@@ -763,18 +764,18 @@ func collapseWS(s string) string {
 // ═══════════════════════════════════════════════════════════
 
 var (
-	reHeading     = regexp.MustCompile(`^(#{1,6})\s+(.+)$`)
-	reOrderedItem = regexp.MustCompile(`^(\s*)\d+\.\s+(.+)$`)
+	reHeading       = regexp.MustCompile(`^(#{1,6})\s+(.+)$`)
+	reOrderedItem   = regexp.MustCompile(`^(\s*)\d+\.\s+(.+)$`)
 	reUnorderedItem = regexp.MustCompile(`^(\s*)[-*]\s+(.+)$`)
-	reHR          = regexp.MustCompile(`^(---+|\*\*\*+|___+)$`)
-	reBqLine      = regexp.MustCompile(`^>\s?(.*)$`)
+	reHR            = regexp.MustCompile(`^(---+|\*\*\*+|___+)$`)
+	reBqLine        = regexp.MustCompile(`^>\s?(.*)$`)
 
 	// Inline patterns (applied in order)
 	reInlineCode   = regexp.MustCompile("`([^`]+)`")
 	reInlineImage  = regexp.MustCompile(`!\[([^\]]*)\]\(([^)]+)\)`)
 	reInlineLink   = regexp.MustCompile(`\[([^\]]+)\]\(([^)]+)\)`)
 	reInlineBold   = regexp.MustCompile(`\*\*(.+?)\*\*`)
-	reInlineItalic = regexp.MustCompile(`(?:^|[^*])\*([^*]+?)\*(?:[^*]|$)`)
+	_              = regexp.MustCompile(`(?:^|[^*])\*([^*]+?)\*(?:[^*]|$)`) // reInlineItalic reserved for future use
 	reInlineStrike = regexp.MustCompile(`~~(.+?)~~`)
 )
 
@@ -1165,6 +1166,7 @@ func ParseFrontmatter(md string) (PageMeta, string) {
 		case "space":
 			meta.Space = val
 		case "version":
+			//nolint:errcheck // best-effort integer parse; zero value is handled by caller
 			fmt.Sscanf(val, "%d", &meta.Version)
 		}
 	}
