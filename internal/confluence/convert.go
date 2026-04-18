@@ -5,6 +5,8 @@ import (
 	"html"
 	"regexp"
 	"strings"
+
+	"confluence-cli/internal/confluence/macros"
 )
 
 // ─── HTML Tokenizer ─────────────────────────────────────────
@@ -218,12 +220,27 @@ type node struct {
 	data     string // text content for text nodes
 }
 
-func (n *node) isText() bool { return n.tag == "" }
-func (n *node) attr(k string) string {
+// isText and attr are kept for internal use within this package.
+func (n *node) isText() bool         { return n.tag == "" }
+func (n *node) attr(k string) string { return n.Attr(k) }
+
+// Tag, IsText, Attr, Data, Children implement macros.Noder so that *node can be
+// passed directly to functions in the macros sub-package.
+func (n *node) Tag() string  { return n.tag }
+func (n *node) IsText() bool { return n.tag == "" }
+func (n *node) Data() string { return n.data }
+func (n *node) Attr(k string) string {
 	if n.attrs == nil {
 		return ""
 	}
 	return n.attrs[k]
+}
+func (n *node) Children() []macros.Noder {
+	result := make([]macros.Noder, len(n.children))
+	for i, c := range n.children {
+		result[i] = c
+	}
+	return result
 }
 
 func buildTree(tokens []token) []*node {
@@ -261,6 +278,22 @@ type renderCtx struct {
 	listType  []string // "ul" or "ol"
 	listIndex []int    // counter for ol items
 	inPre     bool
+}
+
+// InPre and SetInPre implement macros.Ctx.
+func (c *renderCtx) InPre() bool     { return c.inPre }
+func (c *renderCtx) SetInPre(v bool) { c.inPre = v }
+
+// makeRenderFn wraps renderNodes as a macros.RenderFunc so that macro renderers
+// can recursively render their child nodes without importing this package.
+func makeRenderFn(ctx *renderCtx) macros.RenderFunc {
+	return func(children []macros.Noder, _ macros.Ctx) string {
+		nodes := make([]*node, len(children))
+		for i, ch := range children {
+			nodes[i] = ch.(*node) //nolint:forcetypeassert // always *node within this package
+		}
+		return renderNodes(nodes, ctx)
+	}
 }
 
 // HTMLToMarkdown converts Confluence HTML (storage or view) to Markdown.
@@ -410,7 +443,7 @@ func renderNode(n *node, ctx *renderCtx) string {
 
 	// ── Confluence macros (storage format) ──
 	case "ac:structured-macro":
-		return renderMacro(n, ctx)
+		return macros.Dispatch(n, ctx, makeRenderFn(ctx))
 	case "ac:rich-text-body":
 		return renderNodes(n.children, ctx)
 	case "ac:plain-text-body":
@@ -424,9 +457,9 @@ func renderNode(n *node, ctx *renderCtx) string {
 		}
 		return n.attr("ac:emoji-shortname")
 	case "ac:image":
-		return renderConfluenceImage(n)
+		return macros.RenderImage(n)
 	case "ac:link":
-		return renderConfluenceLink(n, ctx)
+		return macros.RenderLink(n, ctx, makeRenderFn(ctx))
 	case "ri:url":
 		return ""
 	case "ri:attachment":
@@ -440,7 +473,7 @@ func renderNode(n *node, ctx *renderCtx) string {
 	case "div":
 		cls := n.attr("class")
 		if strings.Contains(cls, "confluence-information-macro") {
-			return renderViewMacro(n, ctx)
+			return macros.RenderView(n, ctx, makeRenderFn(ctx))
 		}
 		if strings.Contains(cls, "code-block") || strings.Contains(cls, "codeblock") {
 			ctx.inPre = true
@@ -576,156 +609,6 @@ func collectCells(tr *node, ctx *renderCtx) []string {
 	return cells
 }
 
-// ── Confluence macro renderers ──
-
-func renderMacro(n *node, ctx *renderCtx) string {
-	name := n.attr("ac:name")
-	switch name {
-	case "code", "noformat":
-		lang := ""
-		var bodyContent string
-		for _, child := range n.children {
-			if child.tag == "ac:parameter" && child.attr("ac:name") == "language" {
-				lang = strings.TrimSpace(renderNodes(child.children, ctx))
-			}
-			if child.tag == "ac:plain-text-body" {
-				bodyContent = renderNodes(child.children, ctx)
-			}
-		}
-		header := "```"
-		if lang != "" {
-			header += lang
-		}
-		return "\n\n" + header + "\n" + strings.TrimRight(bodyContent, "\n") + "\n```\n\n"
-
-	case "info", "note", "warning", "tip":
-		label := strings.ToUpper(name[:1]) + name[1:]
-		body := ""
-		for _, child := range n.children {
-			if child.tag == "ac:rich-text-body" {
-				body = strings.TrimSpace(renderNodes(child.children, ctx))
-			}
-		}
-		lines := strings.Split(body, "\n")
-		for i, l := range lines {
-			lines[i] = "> " + l
-		}
-		return "\n\n> **" + label + ":** " + strings.TrimPrefix(strings.Join(lines, "\n"), "> ") + "\n\n"
-
-	case "toc":
-		return "" // Table of contents macro — skip, it's auto-generated
-
-	case "expand":
-		title := ""
-		body := ""
-		for _, child := range n.children {
-			if child.tag == "ac:parameter" && child.attr("ac:name") == "title" {
-				title = strings.TrimSpace(renderNodes(child.children, ctx))
-			}
-			if child.tag == "ac:rich-text-body" {
-				body = strings.TrimSpace(renderNodes(child.children, ctx))
-			}
-		}
-		if title != "" {
-			return "\n\n<details>\n<summary>" + title + "</summary>\n\n" + body + "\n\n</details>\n\n"
-		}
-		return "\n\n" + body + "\n\n"
-
-	case "panel":
-		body := ""
-		for _, child := range n.children {
-			if child.tag == "ac:rich-text-body" {
-				body = strings.TrimSpace(renderNodes(child.children, ctx))
-			}
-		}
-		lines := strings.Split(body, "\n")
-		for i, l := range lines {
-			lines[i] = "> " + l
-		}
-		return "\n\n" + strings.Join(lines, "\n") + "\n\n"
-
-	case "profile":
-		return "" // user profile macro — no markdown equivalent
-
-	default:
-		// Unknown macro — render body content if any
-		for _, child := range n.children {
-			if child.tag == "ac:rich-text-body" || child.tag == "ac:plain-text-body" {
-				return renderNodes(child.children, ctx)
-			}
-		}
-		return ""
-	}
-}
-
-func renderViewMacro(n *node, ctx *renderCtx) string {
-	cls := n.attr("class")
-	macroType := "Info"
-	switch {
-	case strings.Contains(cls, "macro-warning"):
-		macroType = "Warning"
-	case strings.Contains(cls, "macro-note"):
-		macroType = "Note"
-	case strings.Contains(cls, "macro-tip"):
-		macroType = "Tip"
-	}
-
-	// Find the body div
-	body := ""
-	for _, child := range n.children {
-		if child.tag == "div" && strings.Contains(child.attr("class"), "macro-body") {
-			body = strings.TrimSpace(renderNodes(child.children, ctx))
-		}
-	}
-	if body == "" {
-		body = strings.TrimSpace(renderNodes(n.children, ctx))
-	}
-
-	lines := strings.Split(body, "\n")
-	for i, l := range lines {
-		lines[i] = "> " + l
-	}
-	return "\n\n> **" + macroType + ":** " + strings.TrimPrefix(strings.Join(lines, "\n"), "> ") + "\n\n"
-}
-
-func renderConfluenceImage(n *node) string {
-	for _, child := range n.children {
-		if child.tag == "ri:url" {
-			return "![image](" + child.attr("ri:value") + ")"
-		}
-		if child.tag == "ri:attachment" {
-			return "![" + child.attr("ri:filename") + "](attachment:" + child.attr("ri:filename") + ")"
-		}
-	}
-	return ""
-}
-
-func renderConfluenceLink(n *node, ctx *renderCtx) string {
-	href := ""
-	text := ""
-	for _, child := range n.children {
-		if child.tag == "ri:page" {
-			href = child.attr("ri:content-title")
-			if text == "" {
-				text = href
-			}
-		}
-		if child.tag == "ri:url" {
-			href = child.attr("ri:value")
-		}
-		if child.tag == "ac:plain-text-link-body" || child.tag == "ac:link-body" {
-			text = strings.TrimSpace(renderNodes(child.children, ctx))
-		}
-	}
-	if href != "" && text != "" {
-		return "[" + text + "](" + href + ")"
-	}
-	if text != "" {
-		return text
-	}
-	return href
-}
-
 // ── Cleanup ──
 
 var (
@@ -820,11 +703,7 @@ func MarkdownToStorage(md string) string {
 				i++ // skip closing ```
 			}
 			codeStr := strings.TrimRight(code.String(), "\n")
-			if lang != "" {
-				fmt.Fprintf(&buf, `<ac:structured-macro ac:name="code" ac:schema-version="1"><ac:parameter ac:name="language">%s</ac:parameter><ac:plain-text-body><![CDATA[%s]]></ac:plain-text-body></ac:structured-macro>`, html.EscapeString(lang), codeStr)
-			} else {
-				fmt.Fprintf(&buf, `<ac:structured-macro ac:name="code" ac:schema-version="1"><ac:plain-text-body><![CDATA[%s]]></ac:plain-text-body></ac:structured-macro>`, codeStr)
-			}
+			buf.WriteString(macros.StorageCode(lang, codeStr))
 			continue
 		}
 
@@ -995,7 +874,7 @@ func parseBlockquoteBlock(lines []string, i int, buf *strings.Builder) int {
 			body = m[2] + text[idx:]
 		}
 		body = strings.TrimSpace(body)
-		fmt.Fprintf(buf, `<ac:structured-macro ac:name="%s" ac:schema-version="1"><ac:rich-text-body><p>%s</p></ac:rich-text-body></ac:structured-macro>`, macroName, inlineToStorage(body))
+		buf.WriteString(macros.StorageCallout(macroName, body, inlineToStorage))
 		return i
 	}
 
@@ -1071,17 +950,13 @@ func inlineToStorage(text string) string {
 	// Images before links (![...](...) vs [...](...))
 	text = reInlineImage.ReplaceAllStringFunc(text, func(match string) string {
 		m := reInlineImage.FindStringSubmatch(match)
-		if strings.HasPrefix(m[2], "attachment:") {
-			fname := strings.TrimPrefix(m[2], "attachment:")
-			return fmt.Sprintf(`<ac:image><ri:attachment ri:filename="%s"/></ac:image>`, html.EscapeString(fname))
-		}
-		return fmt.Sprintf(`<ac:image><ri:url ri:value="%s"/></ac:image>`, html.EscapeString(m[2]))
+		return macros.StorageImage(m[1], m[2])
 	})
 
 	// Links
 	text = reInlineLink.ReplaceAllStringFunc(text, func(match string) string {
 		m := reInlineLink.FindStringSubmatch(match)
-		return fmt.Sprintf(`<a href="%s">%s</a>`, html.EscapeString(m[2]), m[1])
+		return macros.StorageLink(m[1], m[2])
 	})
 
 	// Bold (before italic)
@@ -1097,9 +972,6 @@ func inlineToStorage(text string) string {
 	for idx, code := range codeSpans {
 		text = strings.Replace(text, fmt.Sprintf("\x00CODE%d\x00", idx), "<code>"+html.EscapeString(code)+"</code>", 1)
 	}
-
-	// Escape remaining HTML entities in text (but not in tags we just created)
-	// Skip this since we already handle it per-segment above
 
 	return text
 }
