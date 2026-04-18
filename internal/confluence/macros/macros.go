@@ -7,6 +7,7 @@ package macros
 type Noder interface {
 	Tag() string
 	Attr(key string) string
+	Attrs() map[string]string
 	Children() []Noder
 	IsText() bool
 	Data() string
@@ -21,6 +22,12 @@ type Ctx interface {
 
 // RenderFunc renders a slice of child nodes to a Markdown string.
 type RenderFunc func(children []Noder, ctx Ctx) string
+
+// RenderUnknown serializes any unrecognised Confluence element (ac:* or ri:*)
+// to a ```confluence-macro code block so content is never silently dropped.
+func RenderUnknown(n Noder) string {
+	return "\n\n```confluence-macro\n" + NodeToXML(n) + "\n```\n\n"
+}
 
 // Dispatch routes an ac:structured-macro node to the correct Render* function.
 func Dispatch(n Noder, ctx Ctx, render RenderFunc) string {
@@ -38,13 +45,6 @@ func Dispatch(n Noder, ctx Ctx, render RenderFunc) string {
 	case "profile":
 		return "" // user-profile; no Markdown equivalent
 	default:
-		// Unknown macro — render body content if present.
-		for _, child := range n.Children() {
-			tag := child.Tag()
-			if tag == "ac:rich-text-body" || tag == "ac:plain-text-body" {
-				return render(child.Children(), ctx)
-			}
-		}
-		return ""
+		return RenderUnknown(n)
 	}
 }

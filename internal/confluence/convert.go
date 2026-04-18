@@ -235,6 +235,7 @@ func (n *node) Attr(k string) string {
 	}
 	return n.attrs[k]
 }
+func (n *node) Attrs() map[string]string { return n.attrs }
 func (n *node) Children() []macros.Noder {
 	result := make([]macros.Noder, len(n.children))
 	for i, c := range n.children {
@@ -450,6 +451,10 @@ func renderNode(n *node, ctx *renderCtx) string {
 		return renderNodes(n.children, ctx)
 	case "ac:parameter":
 		return "" // skip macro params
+	case "ac:placeholder":
+		return "" // template hint text; no content value
+	case "ac:layout", "ac:layout-section", "ac:layout-cell":
+		return renderNodes(n.children, ctx)
 	case "ac:emoticon":
 		fb := n.attr("ac:emoji-fallback")
 		if fb != "" {
@@ -490,6 +495,11 @@ func renderNode(n *node, ctx *renderCtx) string {
 		return renderNodes(n.children, ctx)
 
 	default:
+		// Unknown Confluence-specific elements are preserved as raw XML.
+		// Generic HTML elements render their children as usual.
+		if strings.HasPrefix(n.tag, "ac:") || strings.HasPrefix(n.tag, "ri:") {
+			return macros.RenderUnknown(n)
+		}
 		return renderNodes(n.children, ctx)
 	}
 }
@@ -703,6 +713,11 @@ func MarkdownToStorage(md string) string {
 				i++ // skip closing ```
 			}
 			codeStr := strings.TrimRight(code.String(), "\n")
+			// confluence-macro blocks contain raw storage XML — pass through unchanged.
+			if lang == "confluence-macro" {
+				buf.WriteString(codeStr)
+				continue
+			}
 			buf.WriteString(macros.StorageCode(lang, codeStr))
 			continue
 		}
@@ -946,6 +961,13 @@ func inlineToStorage(text string) string {
 		codeSpans = append(codeSpans, inner)
 		return fmt.Sprintf("\x00CODE%d\x00", idx)
 	})
+
+	// Escape raw angle brackets so literal <...> in Markdown text doesn't become
+	// an HTML tag in storage. This must happen before the patterns below because
+	// those patterns generate their own <tag> strings which must NOT be escaped.
+	text = strings.ReplaceAll(text, "&", "&amp;")
+	text = strings.ReplaceAll(text, "<", "&lt;")
+	text = strings.ReplaceAll(text, ">", "&gt;")
 
 	// Images before links (![...](...) vs [...](...))
 	text = reInlineImage.ReplaceAllStringFunc(text, func(match string) string {
