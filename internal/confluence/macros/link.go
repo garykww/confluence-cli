@@ -6,10 +6,11 @@ import (
 	"strings"
 )
 
-// RenderLink converts an ac:link element to a Markdown link.
+// RenderLink converts an ac:link element to a Markdown link or @mention.
 func RenderLink(n Noder, ctx Ctx, render RenderFunc) string {
 	href := ""
 	text := ""
+	userAccountID := ""
 	for _, child := range n.Children() {
 		switch child.Tag() {
 		case "ri:page":
@@ -19,9 +20,18 @@ func RenderLink(n Noder, ctx Ctx, render RenderFunc) string {
 			}
 		case "ri:url":
 			href = child.Attr("ri:value")
+		case "ri:user":
+			userAccountID = child.Attr("ri:account-id")
 		case "ac:plain-text-link-body", "ac:link-body":
 			text = strings.TrimSpace(render(child.Children(), ctx))
 		}
+	}
+	// User mention: prefer explicit link-body text, fall back to account-id.
+	if userAccountID != "" {
+		if text != "" {
+			return "@" + text
+		}
+		return "@" + userAccountID
 	}
 	if href != "" && text != "" {
 		return "[" + text + "](" + href + ")"
