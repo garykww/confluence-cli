@@ -128,6 +128,9 @@ func printPageMarkdown(p *confluence.ConfluencePage) {
 	if p.Version != nil {
 		fmt.Printf("version: %d\n", p.Version.Number)
 	}
+	if len(p.Ancestors) > 0 {
+		fmt.Printf("parent_id: %q\n", p.Ancestors[len(p.Ancestors)-1].ID)
+	}
 	fmt.Println("---")
 	fmt.Println()
 
@@ -143,5 +146,34 @@ func printPageMarkdown(p *confluence.ConfluencePage) {
 
 	if bodyHTML != "" {
 		fmt.Print(confluence.HTMLToMarkdown(bodyHTML))
+	}
+}
+
+// printAttachmentList renders an AttachmentList in human-readable format.
+func printAttachmentList(list *confluence.AttachmentList) {
+	fmt.Printf("Attachments: %d\n\n", list.Size)
+	if len(list.Results) == 0 {
+		fmt.Println("  (no attachments)")
+		return
+	}
+	for i, a := range list.Results {
+		size := fmt.Sprintf("%d B", a.FileSize)
+		if a.FileSize >= 1024*1024 {
+			size = fmt.Sprintf("%.1f MB", float64(a.FileSize)/(1024*1024))
+		} else if a.FileSize >= 1024 {
+			size = fmt.Sprintf("%.1f KB", float64(a.FileSize)/1024)
+		}
+		fmt.Printf("  %d. %s  [%s]  %s  (id:%s)\n", i+1, a.Title, a.MediaType, size, a.ID)
+	}
+}
+
+// printAttachment renders a single Attachment in human-readable format.
+func printAttachment(a *confluence.Attachment) {
+	fmt.Printf("Title:     %s\n", a.Title)
+	fmt.Printf("ID:        %s\n", a.ID)
+	fmt.Printf("MediaType: %s\n", a.MediaType)
+	fmt.Printf("Size:      %d bytes\n", a.FileSize)
+	if a.Links != nil && a.Links.Download != "" {
+		fmt.Printf("Download:  %s\n", a.Links.Download)
 	}
 }

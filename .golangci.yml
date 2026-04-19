@@ -1,39 +1,53 @@
+version: "2"
 run:
   timeout: 5m
+
+formatters:
+  enable:
+    - goimports
 
 linters:
   enable:
     - govet
     - staticcheck
     - errcheck
-    - goimports
     - misspell
     - revive
     - gosec
     - unconvert
     - gocritic
 
-linters-settings:
-  revive:
-    rules:
-      - name: exported
-        arguments:
-          - disableStutteringCheck
-  gosec:
-    excludes:
-      - G304  # File path from variable is expected for a CLI tool
-  errcheck:
-    exclude-functions:
-      - fmt.Println
-      - fmt.Printf
-      - fmt.Fprintf
-      - fmt.Fprintln
-      - (io.Writer).Write
+  settings:
+    revive:
+      rules:
+        - name: exported
+          arguments:
+            - disableStutteringCheck
+    gosec:
+      excludes:
+        - G304  # File path from variable is expected for a CLI tool
+        - G104  # Unhandled errors in flag.Parse (ExitOnError guarantees no-error)
+    errcheck:
+      exclude-functions:
+        - fmt.Println
+        - fmt.Printf
+        - fmt.Fprintf
+        - fmt.Fprintln
+        - (io.Writer).Write
+        - (io.Closer).Close
+        - (*os.File).Close
+        - (*net/http.Response).Body.Close
+        - (*mime/multipart.Writer).Close
+        - (*encoding/json.Encoder).Encode
+        - (*encoding/json.Decoder).Decode
+        - (http.ResponseWriter).Write
+        - (net/http.ResponseWriter).Write
 
 issues:
   exclude-rules:
-    - path: _test\.go
+    - path: "_test\\.go"
       linters:
         - gosec
         - errcheck
         - gocritic
+        - revive

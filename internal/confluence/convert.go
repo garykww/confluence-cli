@@ -125,9 +125,10 @@ func findTagEnd(s string, start int) int {
 			}
 			continue
 		}
-		if s[i] == '"' || s[i] == '\'' {
+		switch s[i] {
+		case '"', '\'':
 			inQuote = s[i]
-		} else if s[i] == '>' {
+		case '>':
 			return i
 		}
 	}
@@ -1023,10 +1024,11 @@ func replaceItalic(s string) string {
 
 // PageMeta holds metadata parsed from YAML frontmatter.
 type PageMeta struct {
-	ID      string
-	Title   string
-	Space   string
-	Version int
+	ID       string
+	Title    string
+	Space    string
+	Version  int
+	ParentID string
 }
 
 // ParseFrontmatter extracts YAML frontmatter metadata and the remaining body
@@ -1062,6 +1064,8 @@ func ParseFrontmatter(md string) (PageMeta, string) {
 		case "version":
 			//nolint:errcheck // best-effort integer parse; zero value is handled by caller
 			fmt.Sscanf(val, "%d", &meta.Version)
+		case "parent_id":
+			meta.ParentID = val
 		}
 	}
 
