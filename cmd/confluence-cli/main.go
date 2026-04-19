@@ -47,7 +47,7 @@ func main() {
 		// Config file writer — no Confluence config needed.
 		runConfigSet(os.Args[2:])
 		return
-	case "get-page", "search", "get-space", "list-spaces", "get-children", "update-page":
+	case "get-page", "search", "get-space", "list-spaces", "get-children", "update-page", "create-page":
 		// Valid subcommand — continue to config loading below.
 	default:
 		fmt.Fprintf(os.Stderr, "Unknown subcommand: %s\n\n", subcmd)
@@ -74,6 +74,8 @@ func main() {
 		runGetChildren(ctx, client, os.Args[2:])
 	case "update-page":
 		runUpdatePage(ctx, client, os.Args[2:])
+	case "create-page":
+		runCreatePage(ctx, client, os.Args[2:])
 	}
 }
 
@@ -177,6 +179,7 @@ Subcommands:
   list-spaces   List available spaces
   get-children  Get child pages of a parent page
   update-page   Update a page from Markdown (with frontmatter metadata)
+  create-page   Create a new page from Markdown (with optional frontmatter)
   to-storage    Convert Markdown (stdin or file) to Confluence storage format
   config-set    Write credentials to ~/.confluence-cli
   version       Print version information
@@ -397,6 +400,52 @@ func runConfigSet(args []string) {
 		fatal("writing config file: %v", err)
 	}
 	fmt.Fprintf(os.Stderr, "Config written to %s\n", cfgPath)
+}
+
+func runCreatePage(ctx context.Context, client *confluence.Client, args []string) {
+	fs := flag.NewFlagSet("create-page", flag.ExitOnError)
+	file := fs.String("file", "", "Markdown file with optional frontmatter (reads stdin if omitted)")
+	title := fs.String("title", "", "Page title (overrides frontmatter)")
+	space := fs.String("space", "", "Space key (overrides frontmatter)")
+	parent := fs.String("parent", "", "Parent page ID (creates as child; overrides frontmatter parent_id)")
+	fs.Parse(args) //nolint:errcheck
+
+	input, err := readInput(*file)
+	if err != nil {
+		fatal("reading input: %v", err)
+	}
+
+	md := string(input)
+	meta, body := confluence.ParseFrontmatter(md)
+
+	pageTitle := firstNonEmpty(*title, meta.Title)
+	spaceKey := firstNonEmpty(*space, meta.Space)
+	parentID := firstNonEmpty(*parent, meta.ParentID)
+
+	if pageTitle == "" {
+		fatal("provide -title or set 'title' in frontmatter")
+	}
+	if spaceKey == "" {
+		fatal("provide -space or set 'space' in frontmatter")
+	}
+
+	storage := confluence.MarkdownToStorage(body)
+
+	page, err := client.CreatePage(ctx, spaceKey, pageTitle, parentID, storage)
+	if err != nil {
+		fatal("create-page: %v", err)
+	}
+
+	fmt.Fprintf(os.Stderr, "Created page %q (id:%s) in space %s\n", page.Title, page.ID, spaceKey)
+	printPageMarkdown(page)
+}
+
+// firstNonEmpty returns the first non-empty string argument.
+func firstNonEmpty(a, b string) string {
+	if a != "" {
+		return a
+	}
+	return b
 }
 
 func runToStorage(args []string) {

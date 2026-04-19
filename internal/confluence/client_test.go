@@ -419,6 +419,109 @@ func TestDoGet_SetsRequiredHeaders(t *testing.T) {
 	c.GetPage(context.Background(), "1", "") //nolint:errcheck
 }
 
+// ─── CreatePage ─────────────────────────────────────────────
+
+func TestCreatePage_Success(t *testing.T) {
+	c, cleanup := newTestClient(t, func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
+			t.Errorf("method = %q, want POST", r.Method)
+		}
+		if r.Header.Get("Content-Type") != "application/json" {
+			t.Errorf("Content-Type = %q", r.Header.Get("Content-Type"))
+		}
+		var payload map[string]any
+		if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
+			t.Fatalf("decoding body: %v", err)
+		}
+		if payload["title"] != "My Page" {
+			t.Errorf("title = %v, want %q", payload["title"], "My Page")
+		}
+		space, _ := payload["space"].(map[string]any)
+		if space["key"] != "ENG" {
+			t.Errorf("space.key = %v, want %q", space["key"], "ENG")
+		}
+		w.WriteHeader(http.StatusOK)
+		json.NewEncoder(w).Encode(ConfluencePage{ID: "999", Title: "My Page"})
+	})
+	defer cleanup()
+
+	page, err := c.CreatePage(context.Background(), "ENG", "My Page", "", "<p>Hello</p>")
+	if err != nil {
+		t.Fatalf("CreatePage error: %v", err)
+	}
+	if page.ID != "999" {
+		t.Errorf("page.ID = %q, want %q", page.ID, "999")
+	}
+}
+
+func TestCreatePage_WithParent(t *testing.T) {
+	c, cleanup := newTestClient(t, func(w http.ResponseWriter, r *http.Request) {
+		var payload map[string]any
+		if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
+			t.Fatalf("decoding body: %v", err)
+		}
+		ancestors, _ := payload["ancestors"].([]any)
+		if len(ancestors) == 0 {
+			t.Error("expected ancestors array with parentID")
+		} else {
+			anc, _ := ancestors[0].(map[string]any)
+			if anc["id"] != "42" {
+				t.Errorf("ancestors[0].id = %v, want %q", anc["id"], "42")
+			}
+		}
+		w.WriteHeader(http.StatusOK)
+		json.NewEncoder(w).Encode(ConfluencePage{ID: "100"})
+	})
+	defer cleanup()
+
+	c.CreatePage(context.Background(), "ENG", "Child", "42", "") //nolint:errcheck
+}
+
+func TestCreatePage_NoParent(t *testing.T) {
+	c, cleanup := newTestClient(t, func(w http.ResponseWriter, r *http.Request) {
+		var payload map[string]any
+		if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
+			t.Fatalf("decoding body: %v", err)
+		}
+		if _, hasAncestors := payload["ancestors"]; hasAncestors {
+			t.Error("ancestors key should be absent when parentID is empty")
+		}
+		w.WriteHeader(http.StatusOK)
+		json.NewEncoder(w).Encode(ConfluencePage{ID: "101"})
+	})
+	defer cleanup()
+
+	c.CreatePage(context.Background(), "ENG", "Root Page", "", "") //nolint:errcheck
+}
+
+func TestCreatePage_ValidationErrors(t *testing.T) {
+	c, cleanup := newTestClient(t, func(w http.ResponseWriter, r *http.Request) {
+		t.Error("should not reach server on validation failure")
+	})
+	defer cleanup()
+
+	ctx := context.Background()
+	if _, err := c.CreatePage(ctx, "", "Title", "", "body"); err == nil {
+		t.Error("expected error for empty spaceKey")
+	}
+	if _, err := c.CreatePage(ctx, "ENG", "", "", "body"); err == nil {
+		t.Error("expected error for empty title")
+	}
+}
+
+func TestCreatePage_ServerError(t *testing.T) {
+	c, cleanup := newTestClient(t, func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusInternalServerError)
+		w.Write([]byte(`{"message":"server error"}`))
+	})
+	defer cleanup()
+
+	_, err := c.CreatePage(context.Background(), "ENG", "Title", "", "body")
+	if err == nil {
+		t.Error("expected error for 500 response")
+	}
+}
+
 // ─── helpers ────────────────────────────────────────────────
 
 func isConflictError(err error, target **ConflictError) bool {
