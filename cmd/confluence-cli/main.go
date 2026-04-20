@@ -14,7 +14,7 @@ import (
 	"syscall"
 	"time"
 
-	"confluence-cli/internal/confluence"
+	"github.com/garykww/confluence-cli/internal/confluence"
 )
 
 // buildVersion is set at build time via -ldflags="-X main.buildVersion=x.y.z".
