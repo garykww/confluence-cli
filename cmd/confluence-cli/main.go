@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bufio"
 	"context"
 	"errors"
 	"flag"
@@ -8,6 +9,7 @@ import (
 	"io"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"strings"
 	"syscall"
 	"time"
@@ -41,6 +43,10 @@ func main() {
 		// Offline conversion — no Confluence config needed.
 		runToStorage(os.Args[2:])
 		return
+	case "config-set":
+		// Config file writer — no Confluence config needed.
+		runConfigSet(os.Args[2:])
+		return
 	case "get-page", "search", "get-space", "list-spaces", "get-children", "update-page":
 		// Valid subcommand — continue to config loading below.
 	default:
@@ -72,9 +78,18 @@ func main() {
 }
 
 func loadConfig() confluence.Config {
-	baseURL := os.Getenv("CONFLUENCE_BASE_URL")
-	email := os.Getenv("CONFLUENCE_EMAIL")
-	token := os.Getenv("CONFLUENCE_API_TOKEN")
+	fileCfg := loadConfigFile()
+
+	getval := func(key string) string {
+		if v := os.Getenv(key); v != "" {
+			return v
+		}
+		return fileCfg[key]
+	}
+
+	baseURL := getval("CONFLUENCE_BASE_URL")
+	email := getval("CONFLUENCE_EMAIL")
+	token := getval("CONFLUENCE_API_TOKEN")
 
 	var missing []string
 	if baseURL == "" {
@@ -87,7 +102,7 @@ func loadConfig() confluence.Config {
 		missing = append(missing, "CONFLUENCE_API_TOKEN")
 	}
 	if len(missing) > 0 {
-		fatal("missing required environment variables: %s", strings.Join(missing, ", "))
+		fatal("missing required config: set %s via environment variable or ~/.confluence-cli", strings.Join(missing, ", "))
 	}
 
 	baseURL = strings.TrimRight(baseURL, "/")
@@ -109,6 +124,46 @@ func loadConfig() confluence.Config {
 	}
 }
 
+// loadConfigFile reads KEY=VALUE pairs from .confluence-cli (current dir preferred,
+// then home dir). Returns an empty map if no file is found.
+func loadConfigFile() map[string]string {
+	candidates := []string{".confluence-cli"}
+	if home, err := os.UserHomeDir(); err == nil {
+		candidates = append(candidates, filepath.Join(home, ".confluence-cli"))
+	}
+	for _, path := range candidates {
+		if cfg := loadConfigFileFrom(path); cfg != nil {
+			return cfg
+		}
+	}
+	return nil
+}
+
+// loadConfigFileFrom parses KEY=VALUE pairs from a single config file path.
+// Returns nil if the file does not exist or cannot be read.
+func loadConfigFileFrom(path string) map[string]string {
+	f, err := os.Open(path) //nolint:gosec // intentional config file read
+	if err != nil {
+		return nil
+	}
+	defer f.Close()
+
+	cfg := make(map[string]string)
+	scanner := bufio.NewScanner(f)
+	for scanner.Scan() {
+		line := strings.TrimSpace(scanner.Text())
+		if line == "" || strings.HasPrefix(line, "#") {
+			continue
+		}
+		key, val, ok := strings.Cut(line, "=")
+		if !ok {
+			continue
+		}
+		cfg[strings.TrimSpace(key)] = strings.TrimSpace(val)
+	}
+	return cfg
+}
+
 func printUsage() {
 	fmt.Fprintf(os.Stderr, `confluence-cli — Read and edit Confluence pages from Claude Code
 
@@ -123,17 +178,17 @@ Subcommands:
   get-children  Get child pages of a parent page
   update-page   Update a page from Markdown (with frontmatter metadata)
   to-storage    Convert Markdown (stdin or file) to Confluence storage format
+  config-set    Write credentials to ~/.confluence-cli
   version       Print version information
 
-Environment Variables (required for API subcommands):
+Config (env vars or ~/.confluence-cli file):
   CONFLUENCE_BASE_URL   e.g. https://garykww.atlassian.net
   CONFLUENCE_EMAIL      Your Atlassian account email
   CONFLUENCE_API_TOKEN  Atlassian API token
-
-Optional:
-  CONFLUENCE_TIMEOUT    HTTP timeout, e.g. 60s (default: 30s)
+  CONFLUENCE_TIMEOUT    HTTP timeout, e.g. 60s (default: 30s, env only)
 
 Examples:
+  confluence-cli config-set -base-url https://company.atlassian.net -email me@co.com -token TOKEN
   confluence-cli get-page -id 131166
   confluence-cli get-page -id 131166 -json
   confluence-cli get-page -url "https://garykww.atlassian.net/wiki/spaces/TEST/pages/131166" -human
@@ -316,6 +371,32 @@ func runUpdatePage(ctx context.Context, client *confluence.Client, args []string
 
 	fmt.Fprintf(os.Stderr, "Updated page %q (id:%s) to version %d\n", page.Title, page.ID, page.Version.Number)
 	printPageMarkdown(page)
+}
+
+func runConfigSet(args []string) {
+	fs := flag.NewFlagSet("config-set", flag.ExitOnError)
+	baseURL := fs.String("base-url", "", "Confluence base URL (required)")
+	email := fs.String("email", "", "Atlassian account email (required)")
+	token := fs.String("token", "", "Atlassian API token (required)")
+	fs.Parse(args) //nolint:errcheck
+
+	if *baseURL == "" || *email == "" || *token == "" {
+		fatal("config-set requires -base-url, -email, and -token")
+	}
+
+	home, err := os.UserHomeDir()
+	if err != nil {
+		fatal("cannot determine home directory: %v", err)
+	}
+	cfgPath := filepath.Join(home, ".confluence-cli")
+
+	content := fmt.Sprintf("CONFLUENCE_BASE_URL=%s\nCONFLUENCE_EMAIL=%s\nCONFLUENCE_API_TOKEN=%s\n",
+		strings.TrimRight(*baseURL, "/"), *email, *token)
+
+	if err := os.WriteFile(cfgPath, []byte(content), 0600); err != nil {
+		fatal("writing config file: %v", err)
+	}
+	fmt.Fprintf(os.Stderr, "Config written to %s\n", cfgPath)
 }
 
 func runToStorage(args []string) {
