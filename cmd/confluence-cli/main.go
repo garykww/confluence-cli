@@ -214,6 +214,7 @@ Run "confluence-cli <subcommand> -h" for subcommand-specific help.
 func runGetPage(ctx context.Context, client *confluence.Client, args []string) {
 	fs := flag.NewFlagSet("get-page", flag.ExitOnError)
 	id := fs.String("id", "", "Page ID")
+	fs.StringVar(id, "page-id", "", "Alias for -id")
 	rawURL := fs.String("url", "", "Full Confluence page URL (extracts ID automatically)")
 	expand := fs.String("expand", "", "Comma-separated expand fields (default: space,history,body.storage,body.view,version,ancestors)")
 	human := fs.Bool("human", false, "Human-readable output (metadata + raw HTML body)")
@@ -315,6 +316,7 @@ func runListSpaces(ctx context.Context, client *confluence.Client, args []string
 func runGetChildren(ctx context.Context, client *confluence.Client, args []string) {
 	fs := flag.NewFlagSet("get-children", flag.ExitOnError)
 	id := fs.String("id", "", "Parent page ID (required)")
+	fs.StringVar(id, "page-id", "", "Alias for -id")
 	limit := fs.Int("limit", 25, "Maximum child pages to return")
 	human := fs.Bool("human", false, "Human-readable output instead of JSON")
 	fs.Parse(args) //nolint:errcheck
