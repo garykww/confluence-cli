@@ -47,7 +47,7 @@ func main() {
 		// Config file writer — no Confluence config needed.
 		runConfigSet(os.Args[2:])
 		return
-	case "get-page", "search", "get-space", "list-spaces", "get-children", "update-page", "create-page":
+	case "get-page", "search", "get-space", "list-spaces", "get-children", "update-page", "create-page", "list-attachments", "upload-attachment":
 		// Valid subcommand — continue to config loading below.
 	default:
 		fmt.Fprintf(os.Stderr, "Unknown subcommand: %s\n\n", subcmd)
@@ -76,6 +76,10 @@ func main() {
 		runUpdatePage(ctx, client, os.Args[2:])
 	case "create-page":
 		runCreatePage(ctx, client, os.Args[2:])
+	case "list-attachments":
+		runListAttachments(ctx, client, os.Args[2:])
+	case "upload-attachment":
+		runUploadAttachment(ctx, client, os.Args[2:])
 	}
 }
 
@@ -178,11 +182,13 @@ Subcommands:
   get-space     Get space info by key
   list-spaces   List available spaces
   get-children  Get child pages of a parent page
-  update-page   Update a page from Markdown (with frontmatter metadata)
-  create-page   Create a new page from Markdown (with optional frontmatter)
-  to-storage    Convert Markdown (stdin or file) to Confluence storage format
-  config-set    Write credentials to ~/.confluence-cli
-  version       Print version information
+  update-page        Update a page from Markdown (with frontmatter metadata)
+  create-page        Create a new page from Markdown (with optional frontmatter)
+  list-attachments   List attachments on a page
+  upload-attachment  Upload a local file as an attachment to a page
+  to-storage         Convert Markdown (stdin or file) to Confluence storage format
+  config-set         Write credentials to ~/.confluence-cli
+  version            Print version information
 
 Config (env vars or ~/.confluence-cli file):
   CONFLUENCE_BASE_URL   e.g. https://garykww.atlassian.net
@@ -446,6 +452,74 @@ func firstNonEmpty(a, b string) string {
 		return a
 	}
 	return b
+}
+
+func runListAttachments(ctx context.Context, client *confluence.Client, args []string) {
+	fs := flag.NewFlagSet("list-attachments", flag.ExitOnError)
+	id := fs.String("id", "", "Page ID (required)")
+	rawURL := fs.String("url", "", "Full Confluence page URL (extracts ID automatically)")
+	limit := fs.Int("limit", 25, "Maximum attachments to return")
+	human := fs.Bool("human", false, "Human-readable output instead of JSON")
+	fs.Parse(args) //nolint:errcheck
+
+	pageID := *id
+	if pageID == "" && *rawURL != "" {
+		var err error
+		pageID, err = confluence.ExtractPageIDFromURL(*rawURL)
+		if err != nil {
+			fatal("%v", err)
+		}
+	}
+	if pageID == "" {
+		fatal("provide -id or -url")
+	}
+
+	list, err := client.ListAttachments(ctx, pageID, *limit)
+	if err != nil {
+		fatal("list-attachments: %v", err)
+	}
+
+	if *human {
+		printAttachmentList(list)
+	} else {
+		printJSON(list)
+	}
+}
+
+func runUploadAttachment(ctx context.Context, client *confluence.Client, args []string) {
+	fs := flag.NewFlagSet("upload-attachment", flag.ExitOnError)
+	id := fs.String("id", "", "Target page ID (required)")
+	rawURL := fs.String("url", "", "Full Confluence page URL (extracts ID automatically)")
+	file := fs.String("file", "", "Local file to upload (required)")
+	human := fs.Bool("human", false, "Human-readable output instead of JSON")
+	fs.Parse(args) //nolint:errcheck
+
+	pageID := *id
+	if pageID == "" && *rawURL != "" {
+		var err error
+		pageID, err = confluence.ExtractPageIDFromURL(*rawURL)
+		if err != nil {
+			fatal("%v", err)
+		}
+	}
+	if pageID == "" {
+		fatal("provide -id or -url")
+	}
+	if *file == "" {
+		fatal("upload-attachment requires -file")
+	}
+
+	attachment, err := client.UploadAttachment(ctx, pageID, *file)
+	if err != nil {
+		fatal("upload-attachment: %v", err)
+	}
+
+	fmt.Fprintf(os.Stderr, "Uploaded %q to page id:%s\n", attachment.Title, pageID)
+	if *human {
+		printAttachment(attachment)
+	} else {
+		printJSON(attachment)
+	}
 }
 
 func runToStorage(args []string) {

@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"testing"
 )
 
@@ -520,6 +521,118 @@ func TestCreatePage_ServerError(t *testing.T) {
 	if err == nil {
 		t.Error("expected error for 500 response")
 	}
+}
+
+// ─── ListAttachments ─────────────────────────────────────────
+
+func TestListAttachments_Success(t *testing.T) {
+	expected := AttachmentList{
+		Results: []Attachment{
+			{ID: "att1", Title: "diagram.png", MediaType: "image/png", FileSize: 2048},
+		},
+		Size: 1, Limit: 25, Start: 0,
+	}
+	c, cleanup := newTestClient(t, func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/wiki/rest/api/content/55/child/attachment" {
+			t.Errorf("unexpected path: %s", r.URL.Path)
+		}
+		json.NewEncoder(w).Encode(expected)
+	})
+	defer cleanup()
+
+	list, err := c.ListAttachments(context.Background(), "55", 0)
+	if err != nil {
+		t.Fatalf("ListAttachments error: %v", err)
+	}
+	if list.Size != 1 {
+		t.Errorf("Size = %d, want 1", list.Size)
+	}
+	if list.Results[0].Title != "diagram.png" {
+		t.Errorf("Title = %q, want %q", list.Results[0].Title, "diagram.png")
+	}
+}
+
+func TestListAttachments_EmptyID(t *testing.T) {
+	c, cleanup := newTestClient(t, func(w http.ResponseWriter, r *http.Request) {
+		t.Error("should not reach server with empty ID")
+	})
+	defer cleanup()
+
+	_, err := c.ListAttachments(context.Background(), "", 10)
+	if err == nil {
+		t.Error("expected error for empty page ID")
+	}
+}
+
+// ─── UploadAttachment ────────────────────────────────────────
+
+func TestUploadAttachment_Success(t *testing.T) {
+	tmp := t.TempDir()
+	filePath := tmp + "/test.txt"
+	if err := writeTestFile(filePath, "hello attachment"); err != nil {
+		t.Fatalf("creating temp file: %v", err)
+	}
+
+	c, cleanup := newTestClient(t, func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
+			t.Errorf("method = %q, want POST", r.Method)
+		}
+		if r.Header.Get("X-Atlassian-Token") != "no-check" {
+			t.Errorf("X-Atlassian-Token = %q, want no-check", r.Header.Get("X-Atlassian-Token"))
+		}
+		contentType := r.Header.Get("Content-Type")
+		if len(contentType) < 20 || contentType[:20] != "multipart/form-data;" {
+			t.Errorf("Content-Type = %q, want multipart/form-data;...", contentType)
+		}
+		w.WriteHeader(http.StatusOK)
+		json.NewEncoder(w).Encode(map[string]any{
+			"results": []Attachment{{ID: "att9", Title: "test.txt", MediaType: "text/plain", FileSize: 16}},
+		})
+	})
+	defer cleanup()
+
+	att, err := c.UploadAttachment(context.Background(), "77", filePath)
+	if err != nil {
+		t.Fatalf("UploadAttachment error: %v", err)
+	}
+	if att.ID != "att9" {
+		t.Errorf("ID = %q, want att9", att.ID)
+	}
+}
+
+func TestUploadAttachment_MissingFile(t *testing.T) {
+	c, cleanup := newTestClient(t, func(w http.ResponseWriter, r *http.Request) {
+		t.Error("should not reach server when file is missing")
+	})
+	defer cleanup()
+
+	_, err := c.UploadAttachment(context.Background(), "77", "/nonexistent/path/file.png")
+	if err == nil {
+		t.Error("expected error for missing file")
+	}
+}
+
+func TestUploadAttachment_EmptyPageID(t *testing.T) {
+	c, cleanup := newTestClient(t, func(w http.ResponseWriter, r *http.Request) {
+		t.Error("should not reach server with empty page ID")
+	})
+	defer cleanup()
+
+	_, err := c.UploadAttachment(context.Background(), "", "file.png")
+	if err == nil {
+		t.Error("expected error for empty page ID")
+	}
+}
+
+// writeTestFile creates a file with given content for use in tests.
+func writeTestFile(path, content string) error {
+	f, err := os.Create(path) //nolint:gosec // test helper
+	if err != nil {
+		return err
+	}
+	defer f.Close()
+	_, err = f.WriteString(content)
+	return err
 }
 
 // ─── helpers ────────────────────────────────────────────────

@@ -7,8 +7,11 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"mime/multipart"
 	"net/http"
 	"net/url"
+	"os"
+	"path/filepath"
 	"regexp"
 	"time"
 )
@@ -125,6 +128,28 @@ type ChildPages struct {
 	Size    int              `json:"size"`
 	Limit   int              `json:"limit"`
 	Start   int              `json:"start"`
+}
+
+// Attachment represents a file attached to a Confluence page.
+type Attachment struct {
+	ID        string       `json:"id"`
+	Title     string       `json:"title"`
+	MediaType string       `json:"mediaType"`
+	FileSize  int          `json:"fileSize"`
+	Links     *AttachLinks `json:"_links,omitempty"`
+}
+
+// AttachLinks holds the download URL for an attachment.
+type AttachLinks struct {
+	Download string `json:"download"`
+}
+
+// AttachmentList is the response from the attachment listing endpoint.
+type AttachmentList struct {
+	Results []Attachment `json:"results"`
+	Size    int          `json:"size"`
+	Limit   int          `json:"limit"`
+	Start   int          `json:"start"`
 }
 
 // ConflictError is returned by write operations when the server responds with 409.
@@ -439,6 +464,92 @@ func (c *Client) GetChildPages(ctx context.Context, id string, limit int) (*Chil
 		return nil, fmt.Errorf("parsing child pages response: %w", err)
 	}
 	return &children, nil
+}
+
+// ListAttachments returns the attachments on a Confluence page.
+func (c *Client) ListAttachments(ctx context.Context, pageID string, limit int) (*AttachmentList, error) {
+	if pageID == "" {
+		return nil, fmt.Errorf("page ID is required")
+	}
+	if limit <= 0 {
+		limit = 25
+	}
+	params := url.Values{"limit": {fmt.Sprintf("%d", limit)}}
+
+	data, err := c.doGet(ctx, "/content/"+pageID+"/child/attachment", params)
+	if err != nil {
+		return nil, err
+	}
+
+	var list AttachmentList
+	if err := json.Unmarshal(data, &list); err != nil {
+		return nil, fmt.Errorf("parsing attachment list response: %w", err)
+	}
+	return &list, nil
+}
+
+// UploadAttachment uploads a local file as an attachment to a Confluence page.
+// Sets X-Atlassian-Token: no-check as required by Confluence for attachment uploads.
+func (c *Client) UploadAttachment(ctx context.Context, pageID, filePath string) (*Attachment, error) {
+	if pageID == "" {
+		return nil, fmt.Errorf("page ID is required")
+	}
+	if filePath == "" {
+		return nil, fmt.Errorf("file path is required")
+	}
+
+	f, err := os.Open(filePath) //nolint:gosec // file path is caller-provided, expected
+	if err != nil {
+		return nil, fmt.Errorf("opening file %s: %w", filePath, err)
+	}
+	defer f.Close()
+
+	var buf bytes.Buffer
+	mw := multipart.NewWriter(&buf)
+	part, err := mw.CreateFormFile("file", filepath.Base(filePath))
+	if err != nil {
+		return nil, fmt.Errorf("creating multipart field: %w", err)
+	}
+	if _, err := io.Copy(part, f); err != nil {
+		return nil, fmt.Errorf("writing file to multipart: %w", err)
+	}
+	mw.Close()
+
+	u := c.baseURL + "/content/" + pageID + "/child/attachment"
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, u, &buf)
+	if err != nil {
+		return nil, fmt.Errorf("building upload request: %w", err)
+	}
+	req.Header.Set("Authorization", c.authHeader)
+	req.Header.Set("Content-Type", mw.FormDataContentType())
+	req.Header.Set("Accept", "application/json")
+	req.Header.Set("X-Atlassian-Token", "no-check")
+
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("uploading attachment: %w", err)
+	}
+	defer resp.Body.Close()
+
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, fmt.Errorf("reading upload response: %w", err)
+	}
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return nil, fmt.Errorf("upload attachment: API returned %d: %s", resp.StatusCode, string(body))
+	}
+
+	// The response is a paginated results wrapper even for a single upload.
+	var wrapper struct {
+		Results []Attachment `json:"results"`
+	}
+	if err := json.Unmarshal(body, &wrapper); err != nil {
+		return nil, fmt.Errorf("parsing upload response: %w", err)
+	}
+	if len(wrapper.Results) == 0 {
+		return nil, fmt.Errorf("upload succeeded but no attachment returned")
+	}
+	return &wrapper.Results[0], nil
 }
 
 // UpdatePage updates a Confluence page's title and body content.
