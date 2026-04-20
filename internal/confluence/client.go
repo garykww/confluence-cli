@@ -34,37 +34,44 @@ type ConfluencePage struct {
 	Ancestors []AncestorRef `json:"ancestors,omitempty"`
 }
 
+// SpaceRef is a reference to a Confluence space.
 type SpaceRef struct {
 	Key  string `json:"key"`
 	Name string `json:"name"`
 }
 
+// History holds creation metadata for a page.
 type History struct {
 	CreatedDate string `json:"createdDate"`
 	CreatedBy   *User  `json:"createdBy,omitempty"`
 }
 
+// User represents a Confluence user.
 type User struct {
 	DisplayName string `json:"displayName"`
 	Email       string `json:"email,omitempty"`
 }
 
+// Version holds version metadata for a page.
 type Version struct {
 	Number int    `json:"number"`
 	When   string `json:"when"`
 	By     *User  `json:"by,omitempty"`
 }
 
+// Body holds the content representations of a page.
 type Body struct {
 	Storage *BodyContent `json:"storage,omitempty"`
 	View    *BodyContent `json:"view,omitempty"`
 }
 
+// BodyContent holds a single content representation value.
 type BodyContent struct {
 	Value          string `json:"value"`
 	Representation string `json:"representation"`
 }
 
+// AncestorRef is a reference to an ancestor page.
 type AncestorRef struct {
 	ID    string `json:"id"`
 	Title string `json:"title"`
@@ -88,14 +95,17 @@ type Space struct {
 	Homepage    *HomepageRef `json:"homepage,omitempty"`
 }
 
+// Description holds a space's description content.
 type Description struct {
 	Plain *PlainValue `json:"plain,omitempty"`
 }
 
+// PlainValue holds plain-text content.
 type PlainValue struct {
 	Value string `json:"value"`
 }
 
+// HomepageRef is a reference to a space's homepage.
 type HomepageRef struct {
 	ID    string `json:"id"`
 	Title string `json:"title"`
