@@ -22,7 +22,7 @@ func RenderImage(n Noder) string {
 
 // StorageImage converts a Markdown image to Confluence storage XML.
 // src may be a plain URL or "attachment:<filename>" for attached files.
-func StorageImage(alt, src string) string {
+func StorageImage(_ string, src string) string {
 	if strings.HasPrefix(src, "attachment:") {
 		fname := strings.TrimPrefix(src, "attachment:")
 		return fmt.Sprintf(`<ac:image><ri:attachment ri:filename="%s"/></ac:image>`, html.EscapeString(fname))

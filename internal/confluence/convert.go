@@ -125,9 +125,10 @@ func findTagEnd(s string, start int) int {
 			}
 			continue
 		}
-		if s[i] == '"' || s[i] == '\'' {
+		switch s[i] {
+		case '"', '\'':
 			inQuote = s[i]
-		} else if s[i] == '>' {
+		case '>':
 			return i
 		}
 	}
@@ -375,6 +376,14 @@ func renderNode(n *node, ctx *renderCtx) string {
 
 	// ── Links ──
 	case "a":
+		// View-format user mentions render as @DisplayName.
+		if strings.Contains(n.attr("class"), "confluence-userlink") {
+			c := strings.TrimSpace(renderNodes(n.children, ctx))
+			if c != "" {
+				return "@" + c
+			}
+			return ""
+		}
 		href := n.attr("href")
 		c := strings.TrimSpace(renderNodes(n.children, ctx))
 		if href == "" || c == "" {
@@ -453,6 +462,8 @@ func renderNode(n *node, ctx *renderCtx) string {
 		return "" // skip macro params
 	case "ac:placeholder":
 		return "" // template hint text; no content value
+	case "ac:mention":
+		return macros.RenderMention(n)
 	case "ac:layout", "ac:layout-section", "ac:layout-cell":
 		return renderNodes(n.children, ctx)
 	case "ac:emoticon":
@@ -664,12 +675,13 @@ var (
 	reBqLine        = regexp.MustCompile(`^>\s?(.*)$`)
 
 	// Inline patterns (applied in order)
-	reInlineCode   = regexp.MustCompile("`([^`]+)`")
-	reInlineImage  = regexp.MustCompile(`!\[([^\]]*)\]\(([^)]+)\)`)
-	reInlineLink   = regexp.MustCompile(`\[([^\]]+)\]\(([^)]+)\)`)
-	reInlineBold   = regexp.MustCompile(`\*\*(.+?)\*\*`)
-	_              = regexp.MustCompile(`(?:^|[^*])\*([^*]+?)\*(?:[^*]|$)`) // reInlineItalic reserved for future use
-	reInlineStrike = regexp.MustCompile(`~~(.+?)~~`)
+	reInlineCode    = regexp.MustCompile("`([^`]+)`")
+	reInlineImage   = regexp.MustCompile(`!\[([^\]]*)\]\(([^)]+)\)`)
+	reInlineLink    = regexp.MustCompile(`\[([^\]]+)\]\(([^)]+)\)`)
+	reInlineBold    = regexp.MustCompile(`\*\*(.+?)\*\*`)
+	_               = regexp.MustCompile(`(?:^|[^*])\*([^*]+?)\*(?:[^*]|$)`) // reInlineItalic reserved for future use
+	reInlineStrike  = regexp.MustCompile(`~~(.+?)~~`)
+	reInlineMention = regexp.MustCompile(`@([0-9a-f]{20,})`)
 )
 
 // MarkdownToStorage converts Markdown text to Confluence storage format XHTML.
@@ -969,6 +981,12 @@ func inlineToStorage(text string) string {
 	text = strings.ReplaceAll(text, "<", "&lt;")
 	text = strings.ReplaceAll(text, ">", "&gt;")
 
+	// User mentions: @<atlassian-account-id> → ac:link/ri:user
+	text = reInlineMention.ReplaceAllStringFunc(text, func(match string) string {
+		m := reInlineMention.FindStringSubmatch(match)
+		return macros.StorageMention(m[1])
+	})
+
 	// Images before links (![...](...) vs [...](...))
 	text = reInlineImage.ReplaceAllStringFunc(text, func(match string) string {
 		m := reInlineImage.FindStringSubmatch(match)
@@ -1023,10 +1041,11 @@ func replaceItalic(s string) string {
 
 // PageMeta holds metadata parsed from YAML frontmatter.
 type PageMeta struct {
-	ID      string
-	Title   string
-	Space   string
-	Version int
+	ID       string
+	Title    string
+	Space    string
+	Version  int
+	ParentID string
 }
 
 // ParseFrontmatter extracts YAML frontmatter metadata and the remaining body
@@ -1062,6 +1081,8 @@ func ParseFrontmatter(md string) (PageMeta, string) {
 		case "version":
 			//nolint:errcheck // best-effort integer parse; zero value is handled by caller
 			fmt.Sscanf(val, "%d", &meta.Version)
+		case "parent_id":
+			meta.ParentID = val
 		}
 	}
 

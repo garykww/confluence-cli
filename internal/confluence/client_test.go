@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"testing"
 )
 
@@ -417,6 +418,221 @@ func TestDoGet_SetsRequiredHeaders(t *testing.T) {
 	// Override the client to use our test credentials
 	c.authHeader = expectedAuth
 	c.GetPage(context.Background(), "1", "") //nolint:errcheck
+}
+
+// ─── CreatePage ─────────────────────────────────────────────
+
+func TestCreatePage_Success(t *testing.T) {
+	c, cleanup := newTestClient(t, func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
+			t.Errorf("method = %q, want POST", r.Method)
+		}
+		if r.Header.Get("Content-Type") != "application/json" {
+			t.Errorf("Content-Type = %q", r.Header.Get("Content-Type"))
+		}
+		var payload map[string]any
+		if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
+			t.Fatalf("decoding body: %v", err)
+		}
+		if payload["title"] != "My Page" {
+			t.Errorf("title = %v, want %q", payload["title"], "My Page")
+		}
+		space, _ := payload["space"].(map[string]any)
+		if space["key"] != "ENG" {
+			t.Errorf("space.key = %v, want %q", space["key"], "ENG")
+		}
+		w.WriteHeader(http.StatusOK)
+		json.NewEncoder(w).Encode(ConfluencePage{ID: "999", Title: "My Page"})
+	})
+	defer cleanup()
+
+	page, err := c.CreatePage(context.Background(), "ENG", "My Page", "", "<p>Hello</p>")
+	if err != nil {
+		t.Fatalf("CreatePage error: %v", err)
+	}
+	if page.ID != "999" {
+		t.Errorf("page.ID = %q, want %q", page.ID, "999")
+	}
+}
+
+func TestCreatePage_WithParent(t *testing.T) {
+	c, cleanup := newTestClient(t, func(w http.ResponseWriter, r *http.Request) {
+		var payload map[string]any
+		if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
+			t.Fatalf("decoding body: %v", err)
+		}
+		ancestors, _ := payload["ancestors"].([]any)
+		if len(ancestors) == 0 {
+			t.Error("expected ancestors array with parentID")
+		} else {
+			anc, _ := ancestors[0].(map[string]any)
+			if anc["id"] != "42" {
+				t.Errorf("ancestors[0].id = %v, want %q", anc["id"], "42")
+			}
+		}
+		w.WriteHeader(http.StatusOK)
+		json.NewEncoder(w).Encode(ConfluencePage{ID: "100"})
+	})
+	defer cleanup()
+
+	c.CreatePage(context.Background(), "ENG", "Child", "42", "") //nolint:errcheck
+}
+
+func TestCreatePage_NoParent(t *testing.T) {
+	c, cleanup := newTestClient(t, func(w http.ResponseWriter, r *http.Request) {
+		var payload map[string]any
+		if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
+			t.Fatalf("decoding body: %v", err)
+		}
+		if _, hasAncestors := payload["ancestors"]; hasAncestors {
+			t.Error("ancestors key should be absent when parentID is empty")
+		}
+		w.WriteHeader(http.StatusOK)
+		json.NewEncoder(w).Encode(ConfluencePage{ID: "101"})
+	})
+	defer cleanup()
+
+	c.CreatePage(context.Background(), "ENG", "Root Page", "", "") //nolint:errcheck
+}
+
+func TestCreatePage_ValidationErrors(t *testing.T) {
+	c, cleanup := newTestClient(t, func(w http.ResponseWriter, r *http.Request) {
+		t.Error("should not reach server on validation failure")
+	})
+	defer cleanup()
+
+	ctx := context.Background()
+	if _, err := c.CreatePage(ctx, "", "Title", "", "body"); err == nil {
+		t.Error("expected error for empty spaceKey")
+	}
+	if _, err := c.CreatePage(ctx, "ENG", "", "", "body"); err == nil {
+		t.Error("expected error for empty title")
+	}
+}
+
+func TestCreatePage_ServerError(t *testing.T) {
+	c, cleanup := newTestClient(t, func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusInternalServerError)
+		w.Write([]byte(`{"message":"server error"}`))
+	})
+	defer cleanup()
+
+	_, err := c.CreatePage(context.Background(), "ENG", "Title", "", "body")
+	if err == nil {
+		t.Error("expected error for 500 response")
+	}
+}
+
+// ─── ListAttachments ─────────────────────────────────────────
+
+func TestListAttachments_Success(t *testing.T) {
+	expected := AttachmentList{
+		Results: []Attachment{
+			{ID: "att1", Title: "diagram.png", MediaType: "image/png", FileSize: 2048},
+		},
+		Size: 1, Limit: 25, Start: 0,
+	}
+	c, cleanup := newTestClient(t, func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/wiki/rest/api/content/55/child/attachment" {
+			t.Errorf("unexpected path: %s", r.URL.Path)
+		}
+		json.NewEncoder(w).Encode(expected)
+	})
+	defer cleanup()
+
+	list, err := c.ListAttachments(context.Background(), "55", 0)
+	if err != nil {
+		t.Fatalf("ListAttachments error: %v", err)
+	}
+	if list.Size != 1 {
+		t.Errorf("Size = %d, want 1", list.Size)
+	}
+	if list.Results[0].Title != "diagram.png" {
+		t.Errorf("Title = %q, want %q", list.Results[0].Title, "diagram.png")
+	}
+}
+
+func TestListAttachments_EmptyID(t *testing.T) {
+	c, cleanup := newTestClient(t, func(w http.ResponseWriter, r *http.Request) {
+		t.Error("should not reach server with empty ID")
+	})
+	defer cleanup()
+
+	_, err := c.ListAttachments(context.Background(), "", 10)
+	if err == nil {
+		t.Error("expected error for empty page ID")
+	}
+}
+
+// ─── UploadAttachment ────────────────────────────────────────
+
+func TestUploadAttachment_Success(t *testing.T) {
+	tmp := t.TempDir()
+	filePath := tmp + "/test.txt"
+	if err := writeTestFile(filePath, "hello attachment"); err != nil {
+		t.Fatalf("creating temp file: %v", err)
+	}
+
+	c, cleanup := newTestClient(t, func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
+			t.Errorf("method = %q, want POST", r.Method)
+		}
+		if r.Header.Get("X-Atlassian-Token") != "no-check" {
+			t.Errorf("X-Atlassian-Token = %q, want no-check", r.Header.Get("X-Atlassian-Token"))
+		}
+		contentType := r.Header.Get("Content-Type")
+		if len(contentType) < 20 || contentType[:20] != "multipart/form-data;" {
+			t.Errorf("Content-Type = %q, want multipart/form-data;...", contentType)
+		}
+		w.WriteHeader(http.StatusOK)
+		json.NewEncoder(w).Encode(map[string]any{
+			"results": []Attachment{{ID: "att9", Title: "test.txt", MediaType: "text/plain", FileSize: 16}},
+		})
+	})
+	defer cleanup()
+
+	att, err := c.UploadAttachment(context.Background(), "77", filePath)
+	if err != nil {
+		t.Fatalf("UploadAttachment error: %v", err)
+	}
+	if att.ID != "att9" {
+		t.Errorf("ID = %q, want att9", att.ID)
+	}
+}
+
+func TestUploadAttachment_MissingFile(t *testing.T) {
+	c, cleanup := newTestClient(t, func(w http.ResponseWriter, r *http.Request) {
+		t.Error("should not reach server when file is missing")
+	})
+	defer cleanup()
+
+	_, err := c.UploadAttachment(context.Background(), "77", "/nonexistent/path/file.png")
+	if err == nil {
+		t.Error("expected error for missing file")
+	}
+}
+
+func TestUploadAttachment_EmptyPageID(t *testing.T) {
+	c, cleanup := newTestClient(t, func(w http.ResponseWriter, r *http.Request) {
+		t.Error("should not reach server with empty page ID")
+	})
+	defer cleanup()
+
+	_, err := c.UploadAttachment(context.Background(), "", "file.png")
+	if err == nil {
+		t.Error("expected error for empty page ID")
+	}
+}
+
+// writeTestFile creates a file with given content for use in tests.
+func writeTestFile(path, content string) error {
+	f, err := os.Create(path) //nolint:gosec // test helper
+	if err != nil {
+		return err
+	}
+	defer f.Close()
+	_, err = f.WriteString(content)
+	return err
 }
 
 // ─── helpers ────────────────────────────────────────────────

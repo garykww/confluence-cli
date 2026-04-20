@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bufio"
 	"context"
 	"errors"
 	"flag"
@@ -8,6 +9,7 @@ import (
 	"io"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"strings"
 	"syscall"
 	"time"
@@ -41,7 +43,11 @@ func main() {
 		// Offline conversion — no Confluence config needed.
 		runToStorage(os.Args[2:])
 		return
-	case "get-page", "search", "get-space", "list-spaces", "get-children", "update-page":
+	case "config-set":
+		// Config file writer — no Confluence config needed.
+		runConfigSet(os.Args[2:])
+		return
+	case "get-page", "search", "get-space", "list-spaces", "get-children", "update-page", "create-page", "list-attachments", "upload-attachment":
 		// Valid subcommand — continue to config loading below.
 	default:
 		fmt.Fprintf(os.Stderr, "Unknown subcommand: %s\n\n", subcmd)
@@ -68,13 +74,28 @@ func main() {
 		runGetChildren(ctx, client, os.Args[2:])
 	case "update-page":
 		runUpdatePage(ctx, client, os.Args[2:])
+	case "create-page":
+		runCreatePage(ctx, client, os.Args[2:])
+	case "list-attachments":
+		runListAttachments(ctx, client, os.Args[2:])
+	case "upload-attachment":
+		runUploadAttachment(ctx, client, os.Args[2:])
 	}
 }
 
 func loadConfig() confluence.Config {
-	baseURL := os.Getenv("CONFLUENCE_BASE_URL")
-	email := os.Getenv("CONFLUENCE_EMAIL")
-	token := os.Getenv("CONFLUENCE_API_TOKEN")
+	fileCfg := loadConfigFile()
+
+	getval := func(key string) string {
+		if v := os.Getenv(key); v != "" {
+			return v
+		}
+		return fileCfg[key]
+	}
+
+	baseURL := getval("CONFLUENCE_BASE_URL")
+	email := getval("CONFLUENCE_EMAIL")
+	token := getval("CONFLUENCE_API_TOKEN")
 
 	var missing []string
 	if baseURL == "" {
@@ -87,7 +108,7 @@ func loadConfig() confluence.Config {
 		missing = append(missing, "CONFLUENCE_API_TOKEN")
 	}
 	if len(missing) > 0 {
-		fatal("missing required environment variables: %s", strings.Join(missing, ", "))
+		fatal("missing required config: set %s via environment variable or ~/.confluence-cli", strings.Join(missing, ", "))
 	}
 
 	baseURL = strings.TrimRight(baseURL, "/")
@@ -109,6 +130,46 @@ func loadConfig() confluence.Config {
 	}
 }
 
+// loadConfigFile reads KEY=VALUE pairs from .confluence-cli (current dir preferred,
+// then home dir). Returns an empty map if no file is found.
+func loadConfigFile() map[string]string {
+	candidates := []string{".confluence-cli"}
+	if home, err := os.UserHomeDir(); err == nil {
+		candidates = append(candidates, filepath.Join(home, ".confluence-cli"))
+	}
+	for _, path := range candidates {
+		if cfg := loadConfigFileFrom(path); cfg != nil {
+			return cfg
+		}
+	}
+	return nil
+}
+
+// loadConfigFileFrom parses KEY=VALUE pairs from a single config file path.
+// Returns nil if the file does not exist or cannot be read.
+func loadConfigFileFrom(path string) map[string]string {
+	f, err := os.Open(path) //nolint:gosec // intentional config file read
+	if err != nil {
+		return nil
+	}
+	defer f.Close()
+
+	cfg := make(map[string]string)
+	scanner := bufio.NewScanner(f)
+	for scanner.Scan() {
+		line := strings.TrimSpace(scanner.Text())
+		if line == "" || strings.HasPrefix(line, "#") {
+			continue
+		}
+		key, val, ok := strings.Cut(line, "=")
+		if !ok {
+			continue
+		}
+		cfg[strings.TrimSpace(key)] = strings.TrimSpace(val)
+	}
+	return cfg
+}
+
 func printUsage() {
 	fmt.Fprintf(os.Stderr, `confluence-cli — Read and edit Confluence pages from Claude Code
 
@@ -121,19 +182,22 @@ Subcommands:
   get-space     Get space info by key
   list-spaces   List available spaces
   get-children  Get child pages of a parent page
-  update-page   Update a page from Markdown (with frontmatter metadata)
-  to-storage    Convert Markdown (stdin or file) to Confluence storage format
-  version       Print version information
+  update-page        Update a page from Markdown (with frontmatter metadata)
+  create-page        Create a new page from Markdown (with optional frontmatter)
+  list-attachments   List attachments on a page
+  upload-attachment  Upload a local file as an attachment to a page
+  to-storage         Convert Markdown (stdin or file) to Confluence storage format
+  config-set         Write credentials to ~/.confluence-cli
+  version            Print version information
 
-Environment Variables (required for API subcommands):
+Config (env vars or ~/.confluence-cli file):
   CONFLUENCE_BASE_URL   e.g. https://garykww.atlassian.net
   CONFLUENCE_EMAIL      Your Atlassian account email
   CONFLUENCE_API_TOKEN  Atlassian API token
-
-Optional:
-  CONFLUENCE_TIMEOUT    HTTP timeout, e.g. 60s (default: 30s)
+  CONFLUENCE_TIMEOUT    HTTP timeout, e.g. 60s (default: 30s, env only)
 
 Examples:
+  confluence-cli config-set -base-url https://company.atlassian.net -email me@co.com -token TOKEN
   confluence-cli get-page -id 131166
   confluence-cli get-page -id 131166 -json
   confluence-cli get-page -url "https://garykww.atlassian.net/wiki/spaces/TEST/pages/131166" -human
@@ -318,6 +382,146 @@ func runUpdatePage(ctx context.Context, client *confluence.Client, args []string
 
 	fmt.Fprintf(os.Stderr, "Updated page %q (id:%s) to version %d\n", page.Title, page.ID, page.Version.Number)
 	printPageMarkdown(page)
+}
+
+func runConfigSet(args []string) {
+	fs := flag.NewFlagSet("config-set", flag.ExitOnError)
+	baseURL := fs.String("base-url", "", "Confluence base URL (required)")
+	email := fs.String("email", "", "Atlassian account email (required)")
+	token := fs.String("token", "", "Atlassian API token (required)")
+	fs.Parse(args) //nolint:errcheck
+
+	if *baseURL == "" || *email == "" || *token == "" {
+		fatal("config-set requires -base-url, -email, and -token")
+	}
+
+	home, err := os.UserHomeDir()
+	if err != nil {
+		fatal("cannot determine home directory: %v", err)
+	}
+	cfgPath := filepath.Join(home, ".confluence-cli")
+
+	content := fmt.Sprintf("CONFLUENCE_BASE_URL=%s\nCONFLUENCE_EMAIL=%s\nCONFLUENCE_API_TOKEN=%s\n",
+		strings.TrimRight(*baseURL, "/"), *email, *token)
+
+	if err := os.WriteFile(cfgPath, []byte(content), 0600); err != nil {
+		fatal("writing config file: %v", err)
+	}
+	fmt.Fprintf(os.Stderr, "Config written to %s\n", cfgPath)
+}
+
+func runCreatePage(ctx context.Context, client *confluence.Client, args []string) {
+	fs := flag.NewFlagSet("create-page", flag.ExitOnError)
+	file := fs.String("file", "", "Markdown file with optional frontmatter (reads stdin if omitted)")
+	title := fs.String("title", "", "Page title (overrides frontmatter)")
+	space := fs.String("space", "", "Space key (overrides frontmatter)")
+	parent := fs.String("parent", "", "Parent page ID (creates as child; overrides frontmatter parent_id)")
+	fs.Parse(args) //nolint:errcheck
+
+	input, err := readInput(*file)
+	if err != nil {
+		fatal("reading input: %v", err)
+	}
+
+	md := string(input)
+	meta, body := confluence.ParseFrontmatter(md)
+
+	pageTitle := firstNonEmpty(*title, meta.Title)
+	spaceKey := firstNonEmpty(*space, meta.Space)
+	parentID := firstNonEmpty(*parent, meta.ParentID)
+
+	if pageTitle == "" {
+		fatal("provide -title or set 'title' in frontmatter")
+	}
+	if spaceKey == "" {
+		fatal("provide -space or set 'space' in frontmatter")
+	}
+
+	storage := confluence.MarkdownToStorage(body)
+
+	page, err := client.CreatePage(ctx, spaceKey, pageTitle, parentID, storage)
+	if err != nil {
+		fatal("create-page: %v", err)
+	}
+
+	fmt.Fprintf(os.Stderr, "Created page %q (id:%s) in space %s\n", page.Title, page.ID, spaceKey)
+	printPageMarkdown(page)
+}
+
+// firstNonEmpty returns the first non-empty string argument.
+func firstNonEmpty(a, b string) string {
+	if a != "" {
+		return a
+	}
+	return b
+}
+
+func runListAttachments(ctx context.Context, client *confluence.Client, args []string) {
+	fs := flag.NewFlagSet("list-attachments", flag.ExitOnError)
+	id := fs.String("id", "", "Page ID (required)")
+	rawURL := fs.String("url", "", "Full Confluence page URL (extracts ID automatically)")
+	limit := fs.Int("limit", 25, "Maximum attachments to return")
+	human := fs.Bool("human", false, "Human-readable output instead of JSON")
+	fs.Parse(args) //nolint:errcheck
+
+	pageID := *id
+	if pageID == "" && *rawURL != "" {
+		var err error
+		pageID, err = confluence.ExtractPageIDFromURL(*rawURL)
+		if err != nil {
+			fatal("%v", err)
+		}
+	}
+	if pageID == "" {
+		fatal("provide -id or -url")
+	}
+
+	list, err := client.ListAttachments(ctx, pageID, *limit)
+	if err != nil {
+		fatal("list-attachments: %v", err)
+	}
+
+	if *human {
+		printAttachmentList(list)
+	} else {
+		printJSON(list)
+	}
+}
+
+func runUploadAttachment(ctx context.Context, client *confluence.Client, args []string) {
+	fs := flag.NewFlagSet("upload-attachment", flag.ExitOnError)
+	id := fs.String("id", "", "Target page ID (required)")
+	rawURL := fs.String("url", "", "Full Confluence page URL (extracts ID automatically)")
+	file := fs.String("file", "", "Local file to upload (required)")
+	human := fs.Bool("human", false, "Human-readable output instead of JSON")
+	fs.Parse(args) //nolint:errcheck
+
+	pageID := *id
+	if pageID == "" && *rawURL != "" {
+		var err error
+		pageID, err = confluence.ExtractPageIDFromURL(*rawURL)
+		if err != nil {
+			fatal("%v", err)
+		}
+	}
+	if pageID == "" {
+		fatal("provide -id or -url")
+	}
+	if *file == "" {
+		fatal("upload-attachment requires -file")
+	}
+
+	attachment, err := client.UploadAttachment(ctx, pageID, *file)
+	if err != nil {
+		fatal("upload-attachment: %v", err)
+	}
+
+	fmt.Fprintf(os.Stderr, "Uploaded %q to page id:%s\n", attachment.Title, pageID)
+	if *human {
+		printAttachment(attachment)
+	} else {
+		printJSON(attachment)
+	}
 }
 
 func runToStorage(args []string) {
