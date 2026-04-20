@@ -34,44 +34,44 @@ type ConfluencePage struct {
 	Ancestors []AncestorRef `json:"ancestors,omitempty"`
 }
 
-// SpaceRef is a reference to a Confluence space.
+// SpaceRef is a short space reference embedded in page responses.
 type SpaceRef struct {
 	Key  string `json:"key"`
 	Name string `json:"name"`
 }
 
-// History holds creation metadata for a page.
+// History holds page creation metadata.
 type History struct {
 	CreatedDate string `json:"createdDate"`
 	CreatedBy   *User  `json:"createdBy,omitempty"`
 }
 
-// User represents a Confluence user.
+// User represents an Atlassian user account.
 type User struct {
 	DisplayName string `json:"displayName"`
 	Email       string `json:"email,omitempty"`
 }
 
-// Version holds version metadata for a page.
+// Version holds the version number and authorship of a page revision.
 type Version struct {
 	Number int    `json:"number"`
 	When   string `json:"when"`
 	By     *User  `json:"by,omitempty"`
 }
 
-// Body holds the content representations of a page.
+// Body holds the page body in one or more representations.
 type Body struct {
 	Storage *BodyContent `json:"storage,omitempty"`
 	View    *BodyContent `json:"view,omitempty"`
 }
 
-// BodyContent holds a single content representation value.
+// BodyContent is a single body representation (storage XHTML or rendered view).
 type BodyContent struct {
 	Value          string `json:"value"`
 	Representation string `json:"representation"`
 }
 
-// AncestorRef is a reference to an ancestor page.
+// AncestorRef is a short reference to an ancestor page.
 type AncestorRef struct {
 	ID    string `json:"id"`
 	Title string `json:"title"`
@@ -95,17 +95,17 @@ type Space struct {
 	Homepage    *HomepageRef `json:"homepage,omitempty"`
 }
 
-// Description holds a space's description content.
+// Description holds optional space description text.
 type Description struct {
 	Plain *PlainValue `json:"plain,omitempty"`
 }
 
-// PlainValue holds plain-text content.
+// PlainValue holds a plain-text value from a space description.
 type PlainValue struct {
 	Value string `json:"value"`
 }
 
-// HomepageRef is a reference to a space's homepage.
+// HomepageRef is a short reference to a space's homepage.
 type HomepageRef struct {
 	ID    string `json:"id"`
 	Title string `json:"title"`
@@ -246,6 +246,77 @@ func (c *Client) doPut(ctx context.Context, path string, payload any) ([]byte, e
 		return nil, fmt.Errorf("PUT %s: API returned %d: %s", path, resp.StatusCode, string(body))
 	}
 	return body, nil
+}
+
+// doPost performs an authenticated POST request with a JSON body.
+func (c *Client) doPost(ctx context.Context, path string, payload any) ([]byte, error) {
+	jsonBody, err := json.Marshal(payload)
+	if err != nil {
+		return nil, fmt.Errorf("encoding request body for POST %s: %w", path, err)
+	}
+
+	u := c.baseURL + path
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, u, bytes.NewReader(jsonBody))
+	if err != nil {
+		return nil, fmt.Errorf("building POST request for %s: %w", path, err)
+	}
+	req.Header.Set("Authorization", c.authHeader)
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Accept", "application/json")
+
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("POST %s: %w", path, err)
+	}
+	defer resp.Body.Close()
+
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, fmt.Errorf("reading response from POST %s: %w", path, err)
+	}
+
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return nil, fmt.Errorf("POST %s: API returned %d: %s", path, resp.StatusCode, string(body))
+	}
+	return body, nil
+}
+
+// CreatePage creates a new Confluence page in the given space.
+// parentID is optional; when non-empty the page is created as a child of that page.
+// storageBody is Confluence storage-format XHTML.
+func (c *Client) CreatePage(ctx context.Context, spaceKey, title, parentID, storageBody string) (*ConfluencePage, error) {
+	if spaceKey == "" {
+		return nil, fmt.Errorf("space key is required")
+	}
+	if title == "" {
+		return nil, fmt.Errorf("page title is required")
+	}
+
+	payload := map[string]any{
+		"type":  "page",
+		"title": title,
+		"space": map[string]any{"key": spaceKey},
+		"body": map[string]any{
+			"storage": map[string]any{
+				"value":          storageBody,
+				"representation": "storage",
+			},
+		},
+	}
+	if parentID != "" {
+		payload["ancestors"] = []map[string]any{{"id": parentID}}
+	}
+
+	data, err := c.doPost(ctx, "/content?expand=space,version,ancestors", payload)
+	if err != nil {
+		return nil, err
+	}
+
+	var page ConfluencePage
+	if err := json.Unmarshal(data, &page); err != nil {
+		return nil, fmt.Errorf("parsing created page response: %w", err)
+	}
+	return &page, nil
 }
 
 // GetPage fetches a single Confluence page by ID with optional expand fields.

@@ -128,6 +128,9 @@ func printPageMarkdown(p *confluence.ConfluencePage) {
 	if p.Version != nil {
 		fmt.Printf("version: %d\n", p.Version.Number)
 	}
+	if len(p.Ancestors) > 0 {
+		fmt.Printf("parent_id: %q\n", p.Ancestors[len(p.Ancestors)-1].ID)
+	}
 	fmt.Println("---")
 	fmt.Println()
 
