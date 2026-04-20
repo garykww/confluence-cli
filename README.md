@@ -17,14 +17,18 @@ Or clone and build from source:
 git clone git@github.com:garykww/confluence-cli.git
 cd confluence-cli
 make build
+```
 
-# Set credentials
-export CONFLUENCE_BASE_URL=https://garykww.atlassian.net
-export CONFLUENCE_EMAIL=your.name@example.com
-export CONFLUENCE_API_TOKEN=your_atlassian_token
+Set credentials (one-time):
 
-# Run
-./confluence-cli list-spaces -limit 5
+```bash
+confluence-cli config-set -base-url https://garykww.atlassian.net -email your.name@example.com -token your_token
+```
+
+Then run:
+
+```bash
+confluence-cli list-spaces -limit 5
 ```
 
 ## Authentication Setup
@@ -38,9 +42,18 @@ confluence-cli uses **Atlassian API tokens** for Basic authentication — your A
 3. Give it a label (e.g. `confluence-cli`) and click **Create**
 4. Copy the token — it is only shown once
 
-### 2. Set environment variables
+### 2. Save credentials
 
-The recommended approach is to add the variables to your shell profile so they persist across sessions:
+The recommended approach is the `config-set` subcommand, which writes credentials to `~/.confluence-cli`:
+
+```bash
+confluence-cli config-set \
+  -base-url https://garykww.atlassian.net \
+  -email your.name@example.com \
+  -token your_token_here
+```
+
+Alternatively, export environment variables in your shell profile:
 
 ```bash
 # Add to ~/.zshrc or ~/.bashrc
@@ -49,47 +62,69 @@ export CONFLUENCE_EMAIL=your.name@example.com
 export CONFLUENCE_API_TOKEN=your_token_here
 ```
 
-Then reload your shell:
-
-```bash
-source ~/.zshrc   # or source ~/.bashrc
-```
+Environment variables take precedence over the config file when both are set.
 
 ### 3. Verify the setup
 
 ```bash
-./confluence-cli list-spaces -limit 3 -human
+confluence-cli list-spaces -limit 3 -human
 ```
 
-If you see a list of spaces, authentication is working. A `401` error means the token or email is wrong. A `missing required environment variables` error means one or more env vars are not set.
+If you see a list of spaces, authentication is working. A `401` error means the token or email is wrong.
 
 > **Security note:** Never commit your API token to source control. Use a password manager or your OS keychain to store it securely.
 
-## Environment Variables
+## Configuration
+
+| Source              | Precedence | Notes                                      |
+|---------------------|------------|--------------------------------------------|
+| Environment variable | Higher     | Takes precedence over the config file      |
+| `~/.confluence-cli` | Lower      | Written by `config-set`; KEY=VALUE format  |
 
 | Variable               | Description                                     | Required |
 |------------------------|-------------------------------------------------|----------|
 | `CONFLUENCE_BASE_URL`  | Base URL, e.g. `https://garykww.atlassian.net` | Yes      |
 | `CONFLUENCE_EMAIL`     | Your Atlassian account email                    | Yes      |
 | `CONFLUENCE_API_TOKEN` | Atlassian API token (not your password)         | Yes      |
-| `CONFLUENCE_TIMEOUT`   | HTTP timeout, e.g. `60s` (default: `30s`)       | No       |
+| `CONFLUENCE_TIMEOUT`   | HTTP timeout, e.g. `60s` (default: `30s`, env only) | No  |
 
 The `to-storage` subcommand is offline-only and requires none of them.
 
 ## Subcommands
 
-| Subcommand     | Description                                                   |
-|----------------|---------------------------------------------------------------|
-| `get-page`     | Fetch a page by ID or full URL                                |
-| `search`       | Search pages using a CQL query                                |
-| `get-space`    | Get space details by key                                      |
-| `list-spaces`  | List available spaces                                         |
-| `get-children` | List child pages of a parent page                             |
-| `update-page`  | Update a page from a Markdown file (or stdin)                 |
-| `to-storage`   | Convert Markdown to Confluence storage format XHTML (offline) |
-| `version`      | Print version information                                     |
+| Subcommand           | Description                                                   |
+|----------------------|---------------------------------------------------------------|
+| `config-set`         | Write credentials to `~/.confluence-cli`                      |
+| `get-page`           | Fetch a page by ID or full URL                                |
+| `create-page`        | Create a new page from a Markdown file (or stdin)             |
+| `update-page`        | Update a page from a Markdown file (or stdin)                 |
+| `search`             | Search pages using a CQL query                                |
+| `get-space`          | Get space details by key                                      |
+| `list-spaces`        | List available spaces                                         |
+| `get-children`       | List child pages of a parent page                             |
+| `list-attachments`   | List attachments on a page                                    |
+| `upload-attachment`  | Upload a local file as a page attachment                      |
+| `to-storage`         | Convert Markdown to Confluence storage format XHTML (offline) |
+| `version`            | Print version information                                     |
 
 Run `confluence-cli <subcommand> -h` for flag details on any subcommand.
+
+---
+
+### `config-set`
+
+Write credentials to `~/.confluence-cli` so you don't need to set environment variables manually.
+
+```
+Flags:
+  -base-url string   Confluence base URL (required)
+  -email string      Atlassian account email (required)
+  -token string      Atlassian API token (required)
+```
+
+```bash
+confluence-cli config-set -base-url https://garykww.atlassian.net -email me@example.com -token TOKEN
+```
 
 ---
 
@@ -99,16 +134,19 @@ Fetch a single page. Default output is **Markdown with YAML frontmatter** (suita
 
 ```
 Flags:
-  -id string     Page ID
-  -url string    Full Confluence page URL (ID extracted automatically)
-  -expand string Comma-separated expand fields (default: space,history,body.storage,body.view,version,ancestors)
-  -human         Human-readable summary (title, space, version, body)
-  -json          Full JSON response from the Confluence API
+  -id string         Page ID (also accepted as -page-id)
+  -url string        Full Confluence page URL (ID extracted automatically)
+  -expand string     Comma-separated expand fields (default: space,history,body.storage,body.view,version,ancestors)
+  -human             Human-readable summary (title, space, version, body)
+  -json              Full JSON response from the Confluence API
 ```
 
 ```bash
 # Markdown output (default) — includes frontmatter with id, title, space, version
 confluence-cli get-page -id 131166
+
+# Also accepted by LLM agents
+confluence-cli get-page -page-id 131166
 
 # Human-readable summary
 confluence-cli get-page -id 131166 -human
@@ -118,6 +156,43 @@ confluence-cli get-page -id 131166 -json
 
 # Extract page ID from a URL automatically
 confluence-cli get-page -url "https://garykww.atlassian.net/wiki/spaces/TEST/pages/131166"
+```
+
+---
+
+### `create-page`
+
+Create a new Confluence page from a Markdown file or stdin.
+
+```
+Flags:
+  -file string       Markdown file with optional frontmatter (reads stdin if omitted)
+  -title string      Page title (overrides frontmatter)
+  -space string      Space key (overrides frontmatter)
+  -parent string     Parent page ID — creates page as a child (overrides frontmatter parent_id)
+```
+
+```bash
+# From a file with frontmatter
+confluence-cli create-page -file new-page.md
+
+# Inline flags
+confluence-cli create-page -title "My New Page" -space TEST -parent 131166 -file content.md
+
+# From stdin
+echo "# Hello\n\nContent here." | confluence-cli create-page -title "Hello" -space TEST
+```
+
+**Frontmatter format:**
+
+```yaml
+---
+title: "My New Page"
+space: "TEST"
+parent_id: "131166"
+---
+
+Page content here...
 ```
 
 ---
@@ -184,13 +259,14 @@ confluence-cli list-spaces -limit 20 -human
 
 ```
 Flags:
-  -id string     Parent page ID (required)
-  -limit int     Max child pages (default: 25)
-  -human         Human-readable table instead of JSON
+  -id string         Parent page ID (required; also accepted as -page-id)
+  -limit int         Max child pages (default: 25)
+  -human             Human-readable table instead of JSON
 ```
 
 ```bash
 confluence-cli get-children -id 131166 -human
+confluence-cli get-children -page-id 131166 -human
 ```
 
 ---
@@ -226,6 +302,40 @@ version: 12
 ---
 
 Your Markdown content here...
+```
+
+---
+
+### `list-attachments`
+
+```
+Flags:
+  -id string     Page ID (required; also accepted as -page-id)
+  -url string    Full Confluence page URL (ID extracted automatically)
+  -limit int     Max attachments to return (default: 25)
+  -human         Human-readable output instead of JSON
+```
+
+```bash
+confluence-cli list-attachments -id 131166 -human
+```
+
+---
+
+### `upload-attachment`
+
+Upload a local file as an attachment to a Confluence page.
+
+```
+Flags:
+  -id string     Target page ID (required; also accepted as -page-id)
+  -url string    Full Confluence page URL (ID extracted automatically)
+  -file string   Local file to upload (required)
+  -human         Human-readable output instead of JSON
+```
+
+```bash
+confluence-cli upload-attachment -id 131166 -file diagram.png
 ```
 
 ---
@@ -295,7 +405,7 @@ confluence-cli update-page -file my-page.md
 To let Claude read and edit Confluence pages during a session, add this to your `CLAUDE.md`. Claude will use the CLI via Bash to fetch, search, and update pages without any manual steps.
 
 ```markdown
-- **Confluence**: Use the CLI (`<path-to>/confluence-cli`) via Bash to view and edit pages — fetch with `get-page`, search with `search`, push changes with `update-page`.
+- **Confluence**: Use the CLI (`<path-to>/confluence-cli`) via Bash to view and edit pages — fetch with `get-page`, search with `search`, create pages with `create-page`, push changes with `update-page`, and manage attachments with `list-attachments` / `upload-attachment`.
 ```
 
 ---
