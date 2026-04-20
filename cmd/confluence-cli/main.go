@@ -522,7 +522,6 @@ func runUploadAttachment(ctx context.Context, client *confluence.Client, args []
 	}
 }
 
-
 func runToStorage(args []string) {
 	fs := flag.NewFlagSet("to-storage", flag.ExitOnError)
 	file := fs.String("file", "", "Read Markdown from file instead of stdin")
