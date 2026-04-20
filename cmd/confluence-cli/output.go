@@ -6,7 +6,7 @@ import (
 	"os"
 	"strings"
 
-	"confluence-cli/internal/confluence"
+	"github.com/garykww/confluence-cli/internal/confluence"
 )
 
 // printJSON marshals any value as indented JSON to stdout.

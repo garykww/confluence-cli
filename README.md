@@ -7,7 +7,13 @@ Give Claude direct access to your Confluence content: fetch pages as Markdown, s
 ## Quick Start
 
 ```bash
-# Clone and build
+# Install directly with Go
+go install github.com/garykww/confluence-cli/cmd/confluence-cli@latest
+```
+
+Or clone and build from source:
+
+```bash
 git clone git@github.com:garykww/confluence-cli.git
 cd confluence-cli
 make build

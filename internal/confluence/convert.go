@@ -6,7 +6,7 @@ import (
 	"regexp"
 	"strings"
 
-	"confluence-cli/internal/confluence/macros"
+	"github.com/garykww/confluence-cli/internal/confluence/macros"
 )
 
 // ─── HTML Tokenizer ─────────────────────────────────────────
