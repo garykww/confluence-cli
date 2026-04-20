@@ -125,9 +125,10 @@ func findTagEnd(s string, start int) int {
 			}
 			continue
 		}
-		if s[i] == '"' || s[i] == '\'' {
+		switch s[i] {
+		case '"', '\'':
 			inQuote = s[i]
-		} else if s[i] == '>' {
+		case '>':
 			return i
 		}
 	}
